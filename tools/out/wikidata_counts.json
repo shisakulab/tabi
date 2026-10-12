@@ -1,0 +1,113 @@
+{
+ "heritage": {
+  "name": "世界遺産(P757あり)",
+  "official": 26,
+  "note": "P757 あり(日本は P17=Q17。公式は日本の登録数=26 件)",
+  "all": 6185,
+  "jp": 266,
+  "jpcoord": 250,
+  "jplabel": 264,
+  "allcoord": 5912,
+  "alllabel": 2112,
+  "world": 6185
+ },
+ "judenken": {
+  "name": "重伝建",
+  "official": 130,
+  "note": "P1435=Q850649",
+  "all": 116,
+  "jp": 115,
+  "jpcoord": 94,
+  "jplabel": 115,
+  "allcoord": 94,
+  "alllabel": 116
+ },
+ "meisui": {
+  "name": "名水百選",
+  "official": 100,
+  "note": "P361=Q10917783",
+  "all": 100,
+  "jp": 96,
+  "jpcoord": 83,
+  "jplabel": 96,
+  "allcoord": 83,
+  "alllabel": 100
+ },
+ "heisei": {
+  "name": "平成の名水百選",
+  "official": 100,
+  "note": "P361=Q11482873",
+  "all": 6,
+  "jp": 6,
+  "jpcoord": 6,
+  "jplabel": 6,
+  "allcoord": 6,
+  "alllabel": 6
+ },
+ "tanada100": {
+  "name": "日本の棚田百選",
+  "official": 134,
+  "note": "P361=Q85719567",
+  "all": 6,
+  "jp": 6,
+  "jpcoord": 6,
+  "jplabel": 6,
+  "allcoord": 6,
+  "alllabel": 6
+ },
+ "tsunagu": {
+  "name": "つなぐ棚田遺産",
+  "official": 271,
+  "note": "P361=Q141434714",
+  "all": 6,
+  "jp": 6,
+  "jpcoord": 6,
+  "jplabel": 6,
+  "allcoord": 6,
+  "alllabel": 6
+ },
+ "nihonisan": {
+  "name": "日本遺産(ストーリー)",
+  "official": 104,
+  "note": "P1435=Q18382798",
+  "all": 39,
+  "jp": 39,
+  "jpcoord": 20,
+  "jplabel": 39,
+  "allcoord": 20,
+  "alllabel": 39
+ },
+ "taki100": {
+  "name": "日本の滝百選",
+  "official": 100,
+  "note": "P361=Q40172600",
+  "all": 59,
+  "jp": 59,
+  "jpcoord": 57,
+  "jplabel": 59,
+  "allcoord": 57,
+  "alllabel": 59
+ },
+ "meijo100": {
+  "name": "日本100名城",
+  "official": 100,
+  "note": "P361=Q1139439",
+  "all": 100,
+  "jp": 100,
+  "jpcoord": 100,
+  "jplabel": 100,
+  "allcoord": 100,
+  "alllabel": 100
+ },
+ "zokumeijo": {
+  "name": "続日本100名城",
+  "official": 100,
+  "note": "P361=Q30927700",
+  "all": 71,
+  "jp": 71,
+  "jpcoord": 69,
+  "jplabel": 71,
+  "allcoord": 69,
+  "alllabel": 71
+ }
+}

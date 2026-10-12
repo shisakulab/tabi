@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>写真の位置・日付チェック</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; line-height: 1.6; max-width: 640px; margin-inline: auto; }
+  h1 { font-size: 1.2rem; }
+  ul { padding-left: 1.2em; }
+  input[type=file] { margin: 8px 0 16px; max-width: 100%; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 16px; font-size: 0.9rem; }
+  th, td { border: 1px solid #8888; padding: 4px 6px; text-align: left; word-break: break-all; }
+  th { width: 8.5em; font-weight: 600; }
+  .warn { color: #c40; }
+</style>
+</head>
+<body>
+<h1>写真の位置・日付チェック</h1>
+<p>iPhone で選んだ写真に、撮影場所（GPS）と撮影日が残っているかを確かめます。</p>
+<ul>
+  <li>「写真アプリから選ぶ」と「ファイルから選ぶ」の両方で試してください（結果が違うことがあります）。</li>
+  <li>iOS の写真選択画面の「オプション」で「位置情報」を含められる場合があります（機種・iOS により異なり、確実ではありません）。</li>
+  <li>写真はこの端末の中で読むだけです。外部には送らず、保存もしません。</li>
+</ul>
+<input id="f" type="file" accept="image/*" multiple>
+<div id="out"></div>
+
+<script>
+/* ---- EXIF 読み取り（JPEG の APP1）。ここから ---- */
+function parseExif(buf) {
+  const r = { heic: false, jpeg: false, hasExif: false, dateTimeOriginal: null, lat: null, lon: null };
+  const v = new DataView(buf);
+  const len = v.byteLength;
+  if (len >= 12 && v.getUint32(4) === 0x66747970) { // 'ftyp'
+    const brand = String.fromCharCode(v.getUint8(8), v.getUint8(9), v.getUint8(10), v.getUint8(11));
+    if (/^(heic|heix|hevc|hevx|mif1|msf1|heim|heis)/.test(brand)) { r.heic = true; return r; }
+  }
+  if (len < 4 || v.getUint16(0) !== 0xFFD8) return r;
+  r.jpeg = true;
+  let p = 2;
+  while (p + 4 <= len) {
+    if (v.getUint8(p) !== 0xFF) break;
+    const marker = v.getUint8(p + 1);
+    if (marker === 0xFF) { p++; continue; }
+    if (marker === 0xDA || marker === 0xD9) break;
+    const size = v.getUint16(p + 2);
+    if (marker === 0xE1 && p + 10 <= len && v.getUint32(p + 4) === 0x45786966 && v.getUint16(p + 8) === 0) { // 'Exif\0\0'
+      readTiff(v, p + 10, Math.min(len, p + 2 + size), r);
+      break;
+    }
+    p += 2 + size;
+  }
+  return r;
+}
+
+function readTiff(v, t, end, r) {
+  if (t + 8 > end) return;
+  const bom = v.getUint16(t);
+  const le = bom === 0x4949;
+  if (!le && bom !== 0x4D4D) return;
+  if (v.getUint16(t + 2, le) !== 42) return;
+  r.hasExif = true;
+  const u16 = (o) => v.getUint16(o, le);
+  const u32 = (o) => v.getUint32(o, le);
+  const TYPE_SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1 };
+
+  function readIfd(off) { // off は TIFF 先頭からの位置。{tag: {type,count,valOff}} を返す
+    const tags = {};
+    let o = t + off;
+    if (o + 2 > end) return tags;
+    const n = u16(o); o += 2;
+    for (let i = 0; i < n && o + 12 <= end; i++, o += 12) {
+      const tag = u16(o), type = u16(o + 2), count = u32(o + 4);
+      const sz = (TYPE_SIZE[type] || 1) * count;
+      const valOff = sz <= 4 ? o + 8 : t + u32(o + 8);
+      if (valOff + sz > end) continue;
+      tags[tag] = { type, count, valOff };
+    }
+    return tags;
+  }
+  function str(e) {
+    let s = "";
+    for (let i = 0; i < e.count; i++) {
+      const c = v.getUint8(e.valOff + i);
+      if (c === 0) break;
+      s += String.fromCharCode(c);
+    }
+    return s;
+  }
+  function rationals(e, n) {
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      const num = u32(e.valOff + i * 8), den = u32(e.valOff + i * 8 + 4);
+      a.push(den ? num / den : 0);
+    }
+    return a;
+  }
+  function coord(tags, valTag, refTag) {
+    const e = tags[valTag];
+    if (!e || e.type !== 5 || e.count < 3) return null;
+    const [d, m, s] = rationals(e, 3);
+    let deg = d + m / 60 + s / 3600;
+    const ref = tags[refTag] ? str(tags[refTag]) : "";
+    if (ref === "S" || ref === "W") deg = -deg;
+    return deg;
+  }
+
+  const ifd0 = readIfd(u32(t + 4));
+  if (ifd0[0x8769]) {
+    const exifIfd = readIfd(u32(ifd0[0x8769].valOff));
+    const d = exifIfd[0x9003];
+    if (d && d.type === 2) r.dateTimeOriginal = str(d);
+  }
+  if (ifd0[0x8825]) {
+    const gps = readIfd(u32(ifd0[0x8825].valOff));
+    r.lat = coord(gps, 2, 1);
+    r.lon = coord(gps, 4, 3);
+  }
+}
+/* ---- ここまで ---- */
+
+const NONE = "なし";
+function row(k, val, cls) {
+  const tr = document.createElement("tr");
+  const th = document.createElement("th"); th.textContent = k;
+  const td = document.createElement("td"); td.textContent = val;
+  if (cls) td.className = cls;
+  tr.append(th, td);
+  return tr;
+}
+
+document.getElementById("f").addEventListener("change", async (ev) => {
+  const out = document.getElementById("out");
+  out.textContent = "";
+  for (const file of ev.target.files) {
+    const t = document.createElement("table");
+    let r = null, err = null;
+    try { r = parseExif(await file.arrayBuffer()); } catch (e) { err = e; }
+    t.append(
+      row("ファイル名", file.name || NONE),
+      row("type", file.type || NONE),
+      row("サイズ", file.size + " bytes"),
+      row("lastModified", file.lastModified ? new Date(file.lastModified).toLocaleString() : NONE)
+    );
+    if (err) {
+      t.append(row("読み取り", "失敗: " + err.message, "warn"));
+    } else if (r.heic) {
+      t.append(row("EXIF", "HEIC は読めません（iPhone の設定や選び方で JPEG で渡されるか確認）", "warn"));
+    } else {
+      t.append(
+        row("EXIF", r.hasExif ? "あり" : NONE),
+        row("DateTimeOriginal", r.dateTimeOriginal || NONE),
+        row("緯度", r.lat == null ? NONE : r.lat.toFixed(6)),
+        row("経度", r.lon == null ? NONE : r.lon.toFixed(6))
+      );
+      if (!r.jpeg) t.append(row("備考", "JPEG ではないため読めていません", "warn"));
+    }
+    out.append(t);
+  }
+});
+</script>
+</body>
+</html>

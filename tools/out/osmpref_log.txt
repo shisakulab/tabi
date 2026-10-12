@@ -1,0 +1,11 @@
+JP-13 onsen_bath {'name': '温泉(public_bath+onsen)', 'tags': '["amenity"="public_bath"]["bath:type"="onsen"]', 'total': None, 'err_total': 'overpass 504', 'named': None, 'err_named': 'overpass 504', 'name_ja': None, 'err_name_ja': 'overpass 504'}
+JP-13 hot_spring {'name': '温泉(natural=hot_spring)', 'tags': '["natural"="hot_spring"]', 'total': None, 'err_total': 'overpass 504', 'named': 5, 'name_ja': 2}
+JP-13 lighthouse {'name': '灯台', 'tags': '["man_made"="lighthouse"]', 'total': None, 'err_total': 'overpass 504', 'named': 11, 'name_ja': None, 'err_name_ja': 'overpass 504'}
+JP-13 waterfall {'name': '滝', 'tags': '["natural"="waterfall"]', 'total': 0, 'named': None, 'err_named': 'overpass 504', 'name_ja': 0}
+JP-13 shinto {'name': '神社', 'tags': '["amenity"="place_of_worship"]["religion"="shinto"]', 'total': 1935, 'named': 1634, 'name_ja': 251}
+JP-13 buddhist {'name': '寺', 'tags': '["amenity"="place_of_worship"]["religion"="buddhist"]', 'total': 2360, 'named': 2145, 'name_ja': 340}
+JP-22 onsen_bath {'name': '温泉(public_bath+onsen)', 'tags': '["amenity"="public_bath"]["bath:type"="onsen"]', 'total': 31, 'named': 30, 'name_ja': 9}
+JP-22 hot_spring {'name': '温泉(natural=hot_spring)', 'tags': '["natural"="hot_spring"]', 'total': 16, 'named': 14, 'name_ja': 8}
+JP-22 lighthouse {'name': '灯台', 'tags': '["man_made"="lighthouse"]', 'total': 33, 'named': None, 'err_named': 'overpass 504', 'name_ja': 4}
+JP-22 waterfall {'name': '滝', 'tags': '["natural"="waterfall"]', 'total': 0, 'named': 0, 'name_ja': 0}
+JP-22 shinto {'name': '神社', 'tags': '["amenity"="place_of_worship"]["religion"="shinto"]', 'total': 1391, 'named': 1148, 'name_ja': 56}

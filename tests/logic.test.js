@@ -1,0 +1,222 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS,
+} from '../logic.js';
+import seasons from '../themes/seasons.js';
+
+const at = (m, lat = 35, lng = 135) => ({ lat: lat + m / 111195, lng }); // 北へ m メートル
+const base = { lat: 35, lng: 135 };
+
+test('distanceMeters: 東京駅〜新宿駅 約6.1km', () => {
+  const d = distanceMeters({ lat: 35.681236, lng: 139.767125 }, { lat: 35.690921, lng: 139.700258 });
+  assert.ok(Math.abs(d - 6100) / 6100 < 0.01, `d=${d}`);
+});
+
+test('tileKey / tilesForBounds', () => {
+  assert.equal(tileKey(35.68, 139.76), '35.5_139.5');
+  assert.equal(tileKey(35.5, 139.5), '35.5_139.5');
+  assert.deepEqual(tilesForBounds(35.4, 139.4, 35.6, 139.6), ['35.0_139.0', '35.0_139.5', '35.5_139.0', '35.5_139.5']);
+  assert.equal(tilesForBounds(20, 120, 50, 150, 10).length, 10);
+});
+
+test('canCheckIn: 50m の境目と誤差', () => {
+  assert.equal(canCheckIn(50, 0), true);
+  assert.equal(canCheckIn(51, 0), false);
+  assert.equal(canCheckIn(70, 20), true);
+  assert.equal(canCheckIn(90, 100), false); // 誤差は 30m まで
+});
+
+test('canStamp: 点は50m、広い場所は radius', () => {
+  assert.equal(canStamp({ radius: 50 }, 50, 0), true);
+  assert.equal(canStamp({}, 51, 0), false);
+  assert.equal(canStamp({ radius: 300 }, 300, 0), true);
+  assert.equal(canStamp({ radius: 300 }, 301, 0), false);
+  assert.equal(canStamp({ radius: 300 }, 320, 20), true);
+  assert.equal(canStamp({ radius: 10 }, 51, 0), false); // 小さい radius でも 50m は守る
+});
+
+test('nearestSpot / bearingDeg', () => {
+  const spots = [{ id: 'a', ...at(500) }, { id: 'b', ...at(100) }, { id: 'c', lat: null, lng: null }];
+  assert.equal(nearestSpot(base, spots).spot.id, 'b');
+  assert.equal(nearestSpot(null, spots), null);
+  assert.equal(nearestSpot(base, []), null);
+  assert.ok(Math.abs(bearingDeg(base, at(100))) < 0.5);
+  assert.ok(Math.abs(bearingDeg(base, { lat: 35, lng: 135.01 }) - 90) < 0.5);
+});
+
+test('fitSize / todayStr', () => {
+  assert.deepEqual(fitSize(4000, 2000, 1280), { w: 1280, h: 640 });
+  assert.deepEqual(fitSize(800, 600, 1280), { w: 800, h: 600 });
+  assert.equal(todayStr(new Date(2026, 2, 5)), '2026-03-05');
+});
+
+const S = (id, tier, dm, extra = {}) => ({ id, name: id, tier, lists: [], ...at(dm), ...extra });
+
+test('spotsForMode: 範囲と格', () => {
+  const spots = [S('far1', 'far', 1500), S('day1', 'day', 1500), S('town1', 'town', 1500), S('townL', 'town', 1500, { lists: ['x'] }),
+    S('far9', 'far', 9000), S('far50', 'far', 50000), S('far200', 'far', 200000)];
+  const ids = (mode) => spotsForMode(spots, mode, base).map((s) => s.id);
+  assert.deepEqual(ids('walk').sort(), ['day1', 'far1', 'town1', 'townL']);
+  assert.deepEqual(ids('bike').sort(), ['day1', 'far1', 'far9', 'townL']);
+  assert.deepEqual(ids('train').sort(), ['day1', 'far1', 'far9']);
+  assert.deepEqual(ids('car').sort(), ['day1', 'far1', 'far50', 'far9']);
+  assert.equal(spotsForMode(spots, 'walk', base)[0].distance < 2000, true);
+  assert.equal(spotsForMode(spots, 'car', null).length, 5); // 位置がなければ格だけ
+  assert.equal(modeAllows({ tier: 'town', lists: [] }, 'bike'), false);
+});
+
+const snow = { id: 'snow', name: '雪', ...base, tier: 'far', seasons: [{ months: [12, 1, 2], label: '雪景色', mark: '雪' }] };
+
+test('seasonOf: 見頃の月', () => {
+  assert.equal(seasonOf(snow, '2026-01-10').label, '雪景色');
+  assert.equal(seasonOf(snow, new Date(2026, 11, 31)).mark, '雪'); // 12月
+  assert.equal(seasonOf(snow, new Date(2026, 6, 1).getTime()), null);
+  assert.equal(seasonOf({ id: 'x' }, '2026-01-10'), null);
+  assert.equal(seasonOf(null, '2026-01-10'), null);
+});
+
+test('monthlyQuests: 今月が見頃から最大5か所、位置と旅のしかたで並べる', () => {
+  const mk = (id, dm, months, tier = 'far') => ({ id, name: id, tier, lists: ['seasons'], ...at(dm), seasons: [{ months, label: 'L', mark: 'M' }] });
+  const spots = [mk('a', 300000, [1]), mk('b', 5000, [1]), mk('c', 1000, [1]), mk('d', 900, [7]), mk('e', 90000, [1]),
+    mk('f', 20000, [1]), mk('g', 40000, [1]), mk('h', 800, [1], 'town')];
+  const jan = new Date(2026, 0, 15);
+  const car = monthlyQuests(spots, jan, 'car', base);
+  assert.equal(car.length, 5);
+  assert.deepEqual(car.slice(0, 4).map((s) => s.id), ['c', 'b', 'f', 'g']); // 範囲内を近い順（h は街歩き級で車では出ない、d は7月）
+  assert.equal(car[4].id, 'e');
+  assert.ok(!car.some((s) => s.id === 'd'));
+  const walk = monthlyQuests(spots, jan, 'walk', base);
+  assert.equal(walk[0].id, 'h'); // 徒歩2km以内は h と c
+  assert.equal(walk[1].id, 'c');
+  const nat = monthlyQuests(spots, jan, 'car', null);
+  assert.ok(nat.length >= 3 && nat.length <= 5 && nat.every((s) => s.distance === null));
+  assert.deepEqual(monthlyQuests(spots, new Date(2026, 3, 1), 'car', base), []);
+});
+
+test('listProgress: 一覧の埋まり具合', () => {
+  const spots = [
+    { id: 'a', name: 'A', lists: ['w'], ...base }, { id: 'b', name: 'B', lists: ['w', 'x'], ...base },
+    { id: 'c', name: 'C', lists: ['w'], hasCoord: false }, { id: 'd', name: 'D', lists: ['x'], ...base },
+    { id: 'snow', name: '雪', lists: ['seasons'], ...base, seasons: [{ months: [1], label: 'l', mark: 'm' }] },
+  ];
+  const visits = [{ spotId: 'a' }, { spotId: 'a' }, { spotId: 'b' }, { spotId: 'snow', seasonal: false }];
+  const w = listProgress(visits, spots, 'w');
+  assert.equal(w.total, 3);
+  assert.equal(w.count, 2);
+  assert.equal(w.cells.find((c) => c.id === 'a').visits, 2);
+  assert.equal(w.cells.find((c) => c.id === 'c').hasCoord, false);
+  assert.equal(listProgress(visits, spots, 'x').count, 1); // 1つの判子で入っている一覧すべてが埋まる
+  assert.equal(listProgress(visits, spots, 'seasons').count, 0); // 見頃でない判子は季節の名所を埋めない
+  assert.equal(listProgress([...visits, { spotId: 'snow', seasonal: true }], spots, 'seasons').count, 1);
+  assert.deepEqual(listProgress(visits, spots, 'none'), { key: 'none', count: 0, total: 0, cells: [] });
+});
+
+test('prefsVisited: 塗る都道府県', () => {
+  const spots = [{ id: 'a', pref: '京都府' }, { id: 'b', pref: '' }, { id: 'c', pref: '山形県' }];
+  const r = prefsVisited([{ spotId: 'a' }, { spotId: 'a' }, { spotId: 'b' }], [{ spotId: 'c', pref: '' }, { pref: '北海道' }], [{ pref: '沖縄県' }], spots);
+  assert.deepEqual(r, { 京都府: 2, 山形県: 1, 北海道: 1, 沖縄県: 1 });
+  assert.deepEqual(prefsVisited([], [], [], []), {});
+});
+
+test('PREFS: 47 都道府県が重ならない', () => {
+  assert.equal(PREFS.length, 47);
+  assert.equal(new Set(PREFS.map((p) => p.name)).size, 47);
+  assert.equal(new Set(PREFS.map((p) => `${p.row}_${p.col}`)).size, 47);
+});
+
+test('themes/seasons: 形', () => {
+  assert.ok(seasons.length >= 3);
+  assert.equal(new Set(seasons.map((s) => s.key)).size, seasons.length);
+  for (const s of seasons) {
+    assert.ok(s.key && s.name && s.pref && s.label && s.mark, s.key);
+    assert.ok(s.months.length > 0 && s.months.every((m) => m >= 1 && m <= 12), s.key);
+    assert.ok(['far', 'day', 'town'].includes(s.tier), s.key);
+    assert.ok(s.radius > 0, s.key);
+  }
+});
+
+test('groupByDay / stampedOn / shouldRemindBackup', () => {
+  const t1 = new Date(2026, 4, 1, 10).getTime();
+  const t2 = new Date(2026, 4, 1, 9).getTime();
+  const t3 = new Date(2026, 4, 3, 9).getTime();
+  const visits = [{ spotId: 'a', at: t1 }, { spotId: 'b', at: t2 }, { spotId: 'a', at: t3 }];
+  const days = groupByDay(visits, [{ at: '2026-05-02' }]);
+  assert.deepEqual(days.map((d) => d.date), ['2026-05-03', '2026-05-02', '2026-05-01']);
+  assert.deepEqual(days[2].visits.map((v) => v.spotId), ['b', 'a']);
+  assert.equal(stampedOn(visits, 'a', new Date(2026, 4, 1, 20)), true);
+  assert.equal(stampedOn(visits, 'b', new Date(2026, 4, 3)), false);
+  assert.equal(shouldRemindBackup({ count: 10, lastExportCount: 0 }), true);
+  assert.equal(shouldRemindBackup({ count: 3, lastExportCount: 0 }), false);
+});
+
+test('sealTypeFor: seal 優先、名前から当てる', () => {
+  assert.equal(sealTypeFor({ name: '姫路城' }), '御城印');
+  assert.equal(sealTypeFor({ name: '首里城跡' }), '御城印');
+  assert.equal(sealTypeFor({ name: '厳島神社' }), '御朱印');
+  assert.equal(sealTypeFor({ name: '清水寺' }), '御朱印');
+  assert.equal(sealTypeFor({ name: '日光東照宮' }), '御朱印');
+  assert.equal(sealTypeFor({ name: '白川郷' }), null);
+  assert.equal(sealTypeFor({ name: '白川郷', seal: '鉄印' }), '鉄印');
+});
+
+test('shouldAutoStamp: 徒歩は範囲内なら押す、電車は滞在か低速のとき', () => {
+  const spot = { id: 'a', lat: 35, lng: 135, radius: 0, lists: ['x'] };
+  const T = 1_000_000_000_000;
+  const fx = (m, t, extra = {}) => ({ ...at(m), acc: 10, at: T + t, speed: null, ...extra });
+  const now = new Date(T);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'walk', [], now), true);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { acc: 80 })], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(200, 0)], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp({ ...spot, lists: [] }, [fx(10, 0)], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp({ ...spot, lat: null }, [fx(10, 0)], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'walk', [{ spotId: 'a', at: T }], now), false);
+  // 車：通過（速い・短い）は偽、速さ不明も偽
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 20 })], 'car', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'car', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 1 })], 'car', [], now), true);
+  // 滞在 120 秒
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(10, AUTO_DWELL_MS, { speed: 20 })], 'train', [], now), true);
+  assert.equal(shouldAutoStamp(spot, [fx(500, -1000), fx(10, 0), fx(10, 60000, { speed: 20 })], 'train', [], now), false);
+  // 速さを距離から（5 秒以上前の fix）
+  assert.equal(shouldAutoStamp(spot, [fx(20, 0), fx(20, 10000)], 'car', [], now), true);
+});
+
+test('sealDraft: 指定、今いる場所の判子、なし', () => {
+  const a = { id: 'a', name: '姫路城', lat: 35, lng: 135, lists: ['x'] };
+  const b = { id: 'b', name: '白川郷', lat: 36, lng: 136, lists: ['x'] };
+  const byId = (id) => ({ a, b })[id] || null;
+  const now = new Date(2026, 9, 12, 15);
+  const visits = [{ spotId: 'b', at: new Date(2026, 9, 12, 9).getTime() }, { spotId: 'a', at: new Date(2026, 9, 12, 10).getTime() }];
+  assert.deepEqual(sealDraft({ spotId: 'a', visits: [], spotById: byId, now }), { spotId: 'a', type: '御城印', date: '2026-10-12' });
+  assert.deepEqual(sealDraft({ visits, spotById: byId, pos: at(5), acc: 10, now }), { spotId: 'a', type: '御城印', date: '2026-10-12' });
+  assert.deepEqual(sealDraft({ visits, spotById: byId, pos: { lat: 40, lng: 140 }, now }), { spotId: '', type: '御朱印', date: '2026-10-12' });
+  assert.deepEqual(sealDraft({ spotId: 'b', visits: [], spotById: byId, now }).type, '御朱印');
+});
+
+function makeJpeg(le, withDate = true) {
+  const ascii = (s) => [...s].map((c) => c.charCodeAt(0)).concat(0);
+  const u16 = (n) => (le ? [n & 255, n >> 8] : [n >> 8, n & 255]);
+  const u32 = (n) => (le ? [n & 255, (n >> 8) & 255, (n >> 16) & 255, n >>> 24] : [n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255]);
+  const date = ascii('2024:05:06 07:08:09'); // 20 バイト
+  // TIFF: ヘッダ 8、IFD0 (1 エントリ: ExifIFD ポインタ) 、ExifIFD (1 エントリ: 0x9003)、日付
+  const ifd0 = 8; const sub = ifd0 + 2 + 12 + 4; const dat = sub + 2 + 12 + 4;
+  const tiff = [...(le ? [0x49, 0x49] : [0x4d, 0x4d]), ...u16(42), ...u32(8),
+    ...u16(1), ...u16(0x8769), ...u16(4), ...u32(1), ...u32(sub), ...u32(0),
+    ...u16(1), ...u16(0x9003), ...u16(2), ...u32(20), ...u32(dat), ...u32(0), ...date];
+  const body = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff];
+  const len = body.length + 2;
+  const app1 = withDate ? [0xff, 0xe1, len >> 8, len & 255, ...body] : [];
+  return new Uint8Array([0xff, 0xd8, ...app1, 0xff, 0xd9]).buffer;
+}
+
+test('readExifDate: II / MM / なし / 壊れ', () => {
+  assert.equal(readExifDate(makeJpeg(true)), '2024-05-06');
+  assert.equal(readExifDate(makeJpeg(false)), '2024-05-06');
+  assert.equal(readExifDate(makeJpeg(true, false)), null);
+  assert.equal(readExifDate(new Uint8Array([1, 2, 3]).buffer), null);
+  assert.equal(readExifDate(makeJpeg(true).slice(0, 30)), null);
+  assert.equal(readExifDate(new ArrayBuffer(0)), null);
+});

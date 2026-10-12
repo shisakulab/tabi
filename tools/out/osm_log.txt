@@ -1,0 +1,4 @@
+onsen_bath {'name': '温泉(public_bath+onsen)', 'tags': '["amenity"="public_bath"]["bath:type"="onsen"]', 'total': None, 'err_total': 'overpass 504', 'named': 688, 'name_ja': None, 'err_name_ja': 'overpass 504'}
+hot_spring {'name': '温泉(natural=hot_spring)', 'tags': '["natural"="hot_spring"]', 'total': 272, 'named': 191, 'name_ja': 40}
+lighthouse {'name': '灯台', 'tags': '["man_made"="lighthouse"]', 'total': 1643, 'named': None, 'err_named': 'overpass 504', 'name_ja': None, 'err_name_ja': 'overpass 504'}
+waterfall {'name': '滝', 'tags': '["natural"="waterfall"]', 'total': 0, 'named': 0, 'name_ja': 0}
