@@ -480,7 +480,7 @@ locateEl.addEventListener('click', async () => {
   startWatch();
   drawQuest();
 });
-// 位置の履歴（直近5分）。自動の判子の「しばらくいた」「ゆっくり」の判定に使う
+// 位置の履歴（直近5分）。自動の判子の「しばらくいた」の判定に使う
 function pushFix(speed) {
   const t = Date.now();
   state.fixes.push({ lat: state.pos.lat, lng: state.pos.lng, acc: state.acc, at: t, speed: Number.isFinite(speed) ? speed : null });
@@ -496,6 +496,12 @@ function onWatch(p) {
   updateNear();
   autoStamp();
 }
+// 止まっていると watchPosition は呼ばれないので、30秒ごとに今の位置を履歴に足して「しばらくいた」を数える
+setInterval(() => {
+  if (watchId === null || !state.pos || document.visibilityState !== 'visible') return;
+  pushFix(null);
+  autoStamp();
+}, 30000);
 function startWatch() {
   if (watchId !== null || !navigator.geolocation) return;
   watchId = navigator.geolocation.watchPosition(onWatch, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });

@@ -220,8 +220,7 @@ export function shouldRemindBackup({ count, lastExportAt = 0, lastExportCount = 
 }
 
 // ---------- 自動の判子・印の自動入力 ----------
-export const AUTO_DWELL_MS = 120000; // 電車・車は、この間ずっと範囲内にいたら押す（仮）
-export const AUTO_SLOW_KMH = 10; // または、この速さ未満（仮）
+export const AUTO_DWELL_MS = 180000; // この間ずっと範囲内にいたら押す（2026-10-13：通っただけで押されるので全部の旅のしかたで滞在を条件に）
 
 // 印の種類を名前から当てる。spot.seal があればそれ。当てられなければ null
 export function sealTypeFor(spot) {
@@ -244,21 +243,10 @@ export function shouldAutoStamp(spot, fixes, mode, visits, now = new Date()) {
   const last = fixes[fixes.length - 1];
   if (!inside(last)) return false;
   if (!(Number.isFinite(last.acc) ? last.acc <= limit : true)) return false;
-  if (!FAR_MODES.includes(mode)) return true;
-  // 遡って範囲内が続いた時間
-  let i = fixes.length - 1;
-  while (i > 0 && inside(fixes[i - 1])) i--;
-  if (last.at - fixes[i].at >= AUTO_DWELL_MS) return true;
-  // 速さ（km/h）。求められなければ偽
-  let kmh = null;
-  if (Number.isFinite(last.speed)) kmh = last.speed * 3.6;
-  else {
-    for (let j = fixes.length - 2; j >= 0; j--) {
-      const dt = (last.at - fixes[j].at) / 1000;
-      if (dt >= 5) { kmh = (distanceMeters(fixes[j], last) / dt) * 3.6; break; }
-    }
-  }
-  return kmh !== null && kmh < AUTO_SLOW_KMH;
+  // 通っただけでは押さない：どの旅のしかたでも、範囲の中にしばらく（AUTO_DWELL_MS）いたら押す
+  let k = fixes.length - 1;
+  while (k > 0 && inside(fixes[k - 1])) k--;
+  return last.at - fixes[k].at >= AUTO_DWELL_MS;
 }
 
 // 印の記録の初期値 { spotId, type, date }。spotId が無ければ、今日の判子のうち今いる場所のものを新しい順に探す

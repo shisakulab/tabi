@@ -113,26 +113,26 @@ test('sealTypeFor: seal 優先、名前から当てる', () => {
   assert.equal(sealTypeFor({ name: '白川郷', seal: '鉄印' }), '鉄印');
 });
 
-test('shouldAutoStamp: 徒歩は範囲内なら押す、電車は滞在か低速のとき', () => {
+test('shouldAutoStamp: どの旅のしかたでも、範囲の中にしばらくいたときだけ押す', () => {
   const spot = { id: 'a', lat: 35, lng: 135, radius: 0, lists: ['x'] };
-  const T = 1_000_000_000_000;
-  const fx = (m, t, extra = {}) => ({ ...at(m), acc: 10, at: T + t, speed: null, ...extra });
-  const now = new Date(T);
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'walk', [], now), true);
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { acc: 80 })], 'walk', [], now), false);
-  assert.equal(shouldAutoStamp(spot, [fx(200, 0)], 'walk', [], now), false);
-  assert.equal(shouldAutoStamp({ ...spot, lists: [] }, [fx(10, 0)], 'walk', [], now), false);
-  assert.equal(shouldAutoStamp({ ...spot, lat: null }, [fx(10, 0)], 'walk', [], now), false);
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'walk', [{ spotId: 'a', at: T }], now), false);
-  // 車：通過（速い・短い）は偽、速さ不明も偽
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 20 })], 'car', [], now), false);
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'car', [], now), false);
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 1 })], 'car', [], now), true);
-  // 滞在 120 秒
-  assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(10, AUTO_DWELL_MS, { speed: 20 })], 'train', [], now), true);
-  assert.equal(shouldAutoStamp(spot, [fx(500, -1000), fx(10, 0), fx(10, 60000, { speed: 20 })], 'train', [], now), false);
-  // 速さを距離から（5 秒以上前の fix）
-  assert.equal(shouldAutoStamp(spot, [fx(20, 0), fx(20, 10000)], 'car', [], now), true);
+  const T0 = 1_000_000_000_000;
+  const fx = (m, t, extra = {}) => ({ ...at(m), acc: 10, at: T0 + t, speed: null, ...extra });
+  const now = new Date(T0);
+  const stay = [fx(10, 0), fx(10, AUTO_DWELL_MS)];
+  // 通っただけ（入ってすぐ・1分だけ）は押さない
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0)], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(10, 60000)], 'bike', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 1 })], 'car', [], now), false);
+  // しばらくいたら押す
+  for (const mode of ['walk', 'bike', 'car', 'train', 'plane']) assert.equal(shouldAutoStamp(spot, stay, mode, [], now), true, mode);
+  // 途中で範囲の外に出たら、数え直し
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(500, 60000), fx(10, 120000), fx(10, AUTO_DWELL_MS)], 'walk', [], now), false);
+  // 精度が悪い・範囲外・一覧にない・座標なし・今日押した は押さない
+  assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(10, AUTO_DWELL_MS, { acc: 80 })], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp(spot, [fx(200, 0), fx(200, AUTO_DWELL_MS)], 'walk', [], now), false);
+  assert.equal(shouldAutoStamp({ ...spot, lists: [] }, stay, 'walk', [], now), false);
+  assert.equal(shouldAutoStamp({ ...spot, lat: null }, stay, 'walk', [], now), false);
+  assert.equal(shouldAutoStamp(spot, stay, 'walk', [{ spotId: 'a', at: T0 }], now), false);
 });
 
 test('sealDraft: 指定、今いる場所の判子、なし', () => {
