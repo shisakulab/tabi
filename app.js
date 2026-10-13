@@ -244,11 +244,34 @@ const visitsOf = (spotId) => state.visits.filter((v) => v.spotId === spotId);
 const seasonalVisitsOf = (spotId) => visitsOf(spotId).filter((v) => v.seasonal);
 const sameMonth = (v, d) => { const x = new Date(v.at); return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth(); };
 
+// 通った場所（範囲に入ったが判子は押していない）。{ spotId: 最後に通った時刻 }。この端末の localStorage にだけ置く
+let passedMap = null;
+function passed() {
+  if (passedMap) return passedMap;
+  try { passedMap = JSON.parse(localStorage.getItem('tabigoyomi.passed') || '{}') || {}; } catch { passedMap = {}; }
+  return passedMap;
+}
+// 今いる位置で範囲に入っている場所を「通った」にし、地図の判子を描き直す
+function markPassed(pos, cands) {
+  const p = passed();
+  let changed = false;
+  for (const { s, d } of cands) {
+    if (d > 1000) break; // cands は近い順
+    if (!canStamp(s, d, state.acc)) continue;
+    if (!p[s.id]) changed = true;
+    p[s.id] = Date.now();
+    const m = markers.get(s.id);
+    if (m) m.setIcon(hankoIcon(s));
+  }
+  if (changed) { try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ } }
+}
+
 function hankoIcon(spot) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
   const color = isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
-  const cls = ['hanko', isSeason ? 'season' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
+  const went = !mine.length && !!passed()[spot.id];
+  const cls = ['hanko', isSeason ? 'season' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
   const node = mine.length
     ? h('div', { class: cls, style: `--c:${color}` }, h('div', { class: 'face' }, h('span', {}, mark)), mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
@@ -592,6 +615,7 @@ async function autoStamp() {
   if (stamping) return;
   const cands = [...spotsIn(keys), ...state.seasonSpots].filter((s) => Number.isFinite(s.lat))
     .map((s) => ({ s, d: distanceMeters(pos, s) })).sort((a, b) => a.d - b.d);
+  markPassed(pos, cands);
   const hit = cands.find(({ s }) => !undone.has(s.id) && shouldAutoStamp(s, state.fixes, state.mode, state.visits, now()));
   if (!hit) return;
   const spot = hit.s;
@@ -948,7 +972,7 @@ function openWelcome(done) {
     h('ul', { class: 'welcome' },
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上の「今月のお題」は、いま見頃の場所です。'),
-      h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・道の駅などの名所、緑＝近所の神社・お寺・温泉・銭湯。押すと塗りつぶしになります。'),
+      h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・道の駅などの名所、緑＝近所の神社・お寺・温泉・銭湯。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
       h('li', {}, '上の「徒歩・自転車・車・電車・飛行機」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
