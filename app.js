@@ -13,7 +13,7 @@ const WD_ATTR = '<a href="https://www.wikidata.org/" target="_blank" rel="noopen
 const TOKYO = { lat: 35.681236, lng: 139.767125 };
 const TIER_COLOR = { list: '#2b4c7e', near: '#7a8f5b' };
 const SEAL_COLOR = '#b8423a';
-const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で' };
+const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で', plane: '飛行機で' };
 const SEAL_TYPES = ['御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
 const MIN_ZOOM_NEAR = 13; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない
@@ -412,7 +412,7 @@ function drawModes() {
     h('button', {
       class: 'mode' + (k === state.mode ? ' on' : ''), type: 'button', 'aria-pressed': String(k === state.mode),
       onclick: async () => { state.mode = k; await db.setSetting('mode', k); drawModes(); drawMap(); drawQuest(); updateNear(); },
-    }, m.label, h('small', {}, `${m.range / 1000}km`))));
+    }, m.label, h('small', {}, m.note || `${m.range / 1000}km`))));
 }
 
 // ---------- 今月のお題 ----------
@@ -439,7 +439,9 @@ function drawQuest() {
         h('span', { class: 'qm' }, s.seasons[0].mark),
         h('span', { class: 'qn' }, s.name),
         s.distance !== null ? h('span', { class: 'qd' }, fmtDist(s.distance)) : null)))
-      : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '今月が見頃の名所は、まだ登録がありません'));
+      : h('p', { class: 'muted', style: 'margin:4px 0 0' }, state.pos
+        ? `${MODES[state.mode].label}で行ける範囲（${fmtDist(MODES[state.mode].range)}）に、今月が見頃の名所はありません`
+        : '今月が見頃の名所は、まだ登録がありません'));
 }
 function openQuests() {
   const qs = currentQuests();

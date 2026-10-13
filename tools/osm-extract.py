@@ -2,12 +2,15 @@
 Overpass が混んで取れないときの代わり。出力は Overpass と同じ形で tools/.cache/osm-JP-XX-{shinto,buddhist,bath}.json に書くので、
 そのあと node tools/build-spots.mjs を走らせればキャッシュとして使われる。
 
-使い方: python tools/osm-extract.py <japan-latest.osm.pbf> <japan.geojson>
-  .osm.pbf: https://download.geofabrik.de/asia/japan-latest.osm.pbf（約2.5GB）。パスに日本語を含むと osmium が開けないので英字だけの場所に置く
+使い方:
+  python tools/osm-extract.py part <japan.geojson> <地方.osm.pbf> <名前>   … tools/.cache/osm-part-<名前>.json に書く
+  python tools/osm-extract.py merge                                       … 全部の part をまとめて osm-JP-XX-*.json に書く
+  .osm.pbf: Geofabrik の地方ごとのファイル（https://download.geofabrik.de/asia/japan/ の hokkaido, tohoku, kanto, chubu, kansai,
+    chugoku, shikoku, kyushu）。日本全体（2.5GB）を一度に処理するとメモリが足りない。パスに日本語を含むと osmium が開けないので英字だけの場所に置く
   japan.geojson: https://github.com/dataofjapan/land の都道府県界（出典：地球地図日本）。都道府県を決めるのにだけ使い、配らない
   必要: pip install osmium shapely
 境界の外（海の上の灯台など）は 20km 以内でいちばん近い県にする。relation（複数の囲みでできた境内など）は入れていない。
-日本全体の点の位置をメモリに載せると足りないので、①名前つきの場所（点・線）を集める ②線に使う点だけ位置を読む、の2回読む。
+点の位置をすべてメモリに載せると足りないので、①名前つきの場所（点・線）を集める ②線に使う点だけ位置を読む、の2回読む。
 """
 import json, pathlib, sys
 import osmium
@@ -34,7 +37,7 @@ def group_of(t):
     return None
 
 
-def main(pbf, geojson):
+def part(geojson, pbf, name):
     prefs = load_prefs(geojson)
     print("都道府県の境界", len(prefs), "/ 47")
     tree = STRtree([g for _, g in prefs])
@@ -56,10 +59,9 @@ def main(pbf, geojson):
     print("場所", len(found), "件、線の点", len(need))
     # ② 線に使う点の位置だけ読む
     loc = {}
-    for o in osmium.FileProcessor(pbf, osmium.osm.NODE):
-        if o.id in need:
-            loc[o.id] = (o.location.lat, o.location.lon)
-    out = {}
+    for o in osmium.FileProcessor(pbf, osmium.osm.NODE).with_filter(osmium.filter.IdFilter(need)):
+        loc[o.id] = (o.location.lat, o.location.lon)
+    out = []
     n = 0
     for f in found:
         if f[0] == "node":
@@ -85,15 +87,31 @@ def main(pbf, geojson):
             el["lat"], el["lon"] = round(lat, 7), round(lon, 7)
         else:
             el["center"] = {"lat": round(lat, 7), "lon": round(lon, 7)}
-        out.setdefault(f"osm-{iso}-{g}", []).append(el)
+        out.append([f"osm-{iso}-{g}", el])
         n += 1
     CACHE.mkdir(exist_ok=True)
+    (CACHE / f"osm-part-{name}.json").write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    print(name, "書き出し", n, "件")
+
+
+def merge():
+    out, seen = {}, set()
+    for f in sorted(CACHE.glob("osm-part-*.json")):
+        for key, el in json.loads(f.read_text(encoding="utf-8")):
+            k = (el["type"], el["id"])  # 地方のファイルは境目で重なるので1つに
+            if k in seen:
+                continue
+            seen.add(k)
+            out.setdefault(key, []).append(el)
     for i in range(1, 48):
         for g in ("shinto", "buddhist", "bath"):
             key = f"osm-JP-{i:02d}-{g}"
             (CACHE / f"{key}.json").write_text(json.dumps(out.get(key, []), ensure_ascii=False), encoding="utf-8")
-    print("書き出し", n, "件")
+    print("まとめ", len(seen), "件")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    if sys.argv[1] == "part":
+        part(*sys.argv[2:5])
+    else:
+        merge()

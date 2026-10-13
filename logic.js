@@ -100,13 +100,15 @@ export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', 
 export const MODES = {
   walk: { label: '徒歩', range: 2000 },
   bike: { label: '自転車', range: 10000 },
-  train: { label: '電車', range: 30000 },
   car: { label: '車', range: 100000 },
+  train: { label: '電車', range: 200000 }, // 新幹線・特急で日帰りできるくらい。車（100km）より遠くまで行ける
+  plane: { label: '飛行機', range: 3000000, note: '全国' }, // 日本の端から端まで届く距離
 };
+const FAR_MODES = ['train', 'car', 'plane'];
 
-// 旅のしかたで出す場所か。徒歩・自転車はすべて。電車・車は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
+// 旅のしかたで出す場所か。徒歩・自転車はすべて。電車・車・飛行機は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
 export function modeAllows(spot, mode) {
-  if (mode === 'train' || mode === 'car') return spot.tier !== 'near';
+  if (FAR_MODES.includes(mode)) return spot.tier !== 'near';
   return true;
 }
 
@@ -149,9 +151,8 @@ export function monthlyQuests(spots, date, mode, pos, limit = 5) {
   }
   const range = (MODES[mode] || MODES.walk).range;
   const withD = inSeason.map((s) => ({ ...s, distance: distanceMeters(pos, s) })).sort((a, b) => a.distance - b.distance);
-  const inRange = withD.filter((s) => s.distance <= range && modeAllows(s, mode));
-  const rest = withD.filter((s) => !inRange.includes(s));
-  return [...inRange, ...rest].slice(0, limit);
+  // 範囲の外は出さない（自転車なのに 100km 先の名所がお題に出ていた）
+  return withD.filter((s) => s.distance <= range && modeAllows(s, mode)).slice(0, limit);
 }
 
 // ---------- 一覧 ----------
@@ -243,7 +244,7 @@ export function shouldAutoStamp(spot, fixes, mode, visits, now = new Date()) {
   const last = fixes[fixes.length - 1];
   if (!inside(last)) return false;
   if (!(Number.isFinite(last.acc) ? last.acc <= limit : true)) return false;
-  if (mode !== 'train' && mode !== 'car') return true;
+  if (!FAR_MODES.includes(mode)) return true;
   // 遡って範囲内が続いた時間
   let i = fixes.length - 1;
   while (i > 0 && inside(fixes[i - 1])) i--;

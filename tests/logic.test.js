@@ -61,11 +61,21 @@ test('spotsForMode: 範囲と種類', () => {
   const ids = (mode) => spotsForMode(spots, mode, base).map((s) => s.id);
   assert.deepEqual(ids('walk').sort(), ['list1', 'near1']);
   assert.deepEqual(ids('bike').sort(), ['list1', 'list9', 'near1', 'near9']);
-  assert.deepEqual(ids('train').sort(), ['list1', 'list9']);
+  assert.deepEqual(ids('train').sort(), ['list1', 'list50', 'list9']);
   assert.deepEqual(ids('car').sort(), ['list1', 'list50', 'list9']);
   assert.equal(spotsForMode(spots, 'walk', base)[0].distance < 2000, true);
   assert.equal(spotsForMode(spots, 'car', null).length, 4); // 位置がなければ種類だけ
   assert.equal(modeAllows({ tier: 'near', lists: [] }, 'train'), false);
+  assert.deepEqual(ids('plane').sort(), ['list1', 'list200', 'list50', 'list9']);
+});
+
+test('monthlyQuests: 旅のしかたの範囲の外は出さない', () => {
+  const sp = (id, dm) => ({ id, name: id, tier: 'list', lists: ['seasons'], ...at(dm), seasons: [{ months: [10], label: 'L', mark: 'M' }] });
+  const spots = [sp('near', 5000), sp('mid', 50000), sp('far', 150000)];
+  const ids = (mode) => monthlyQuests(spots, new Date(2026, 9, 13), mode, base).map((s) => s.id);
+  assert.deepEqual(ids('bike'), ['near']);
+  assert.deepEqual(ids('car'), ['near', 'mid']);
+  assert.deepEqual(ids('walk'), []);
 });
 
 test('themes/seasons: 形', () => {
