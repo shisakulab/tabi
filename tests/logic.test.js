@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
@@ -154,8 +154,8 @@ test('sealDraft: 指定、今いる場所の判子、なし', () => {
   const visits = [{ spotId: 'b', at: new Date(2026, 9, 12, 9).getTime() }, { spotId: 'a', at: new Date(2026, 9, 12, 10).getTime() }];
   assert.deepEqual(sealDraft({ spotId: 'a', visits: [], spotById: byId, now }), { spotId: 'a', type: '御城印', date: '2026-10-12' });
   assert.deepEqual(sealDraft({ visits, spotById: byId, pos: at(5), acc: 10, now }), { spotId: 'a', type: '御城印', date: '2026-10-12' });
-  assert.deepEqual(sealDraft({ visits, spotById: byId, pos: { lat: 40, lng: 140 }, now }), { spotId: '', type: '御朱印', date: '2026-10-12' });
-  assert.deepEqual(sealDraft({ spotId: 'b', visits: [], spotById: byId, now }).type, '御朱印');
+  assert.deepEqual(sealDraft({ visits, spotById: byId, pos: { lat: 40, lng: 140 }, now }), { spotId: '', type: '写真・メモ', date: '2026-10-12' });
+  assert.deepEqual(sealDraft({ spotId: 'b', visits: [], spotById: byId, now }).type, '写真・メモ');
 });
 
 function makeJpeg(le, withDate = true) {
@@ -199,4 +199,43 @@ test('dailyQuests: 徒歩・自転車だけ、範囲内のまだ押していな�
   const before = new Set(a.map((s) => s.id));
   assert.ok(dailyQuests(spots, '2026-10-13', 'walk', pos, none, before).every((s) => !before.has(s.id)));
   assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, before, before).map((s) => s.id), a.map((s) => s.id));
+});
+
+test('pickNear: 今いて押せる場所を先に、押した・通った後はまだの場所でいちばん近いところ', () => {
+  const pos = { lat: 35, lng: 139 };
+  const at = (id, dLat, radius = 50) => ({ id, lat: 35 + dLat, lng: 139, radius });
+  const here = at('here', 0.0001); const near = at('near', 0.002); const far = at('far', 0.005); const tooFar = at('tooFar', 0.05);
+  const spots = [far, near, here, tooFar];
+  const none = new Set();
+  assert.equal(pickNear(pos, spots, 10, none, none).spot.id, 'here');
+  // 今日押した → 次のまだの場所（near）
+  assert.equal(pickNear(pos, spots, 10, new Set(['here']), none).spot.id, 'near');
+  // 通った・前に押した場所は飛ばす
+  assert.equal(pickNear(pos, spots, 10, new Set(['here']), new Set(['near'])).spot.id, 'far');
+  // 通った場所でも、今いて押せるなら出す
+  assert.equal(pickNear(pos, spots, 10, none, new Set(['here'])).spot.id, 'here');
+  // 2km より遠いものだけなら出さない
+  assert.equal(pickNear(pos, [tooFar], 10, none, none), null);
+});
+
+test('徒歩の今日のお題：回って戻ると約4kmになる2〜3か所を、回る順に', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  // 0.0005度刻み（約55m）〜2km 弱まで、いろいろな向きに40か所
+  const spots = Array.from({ length: 40 }, (_, i) => {
+    const r = 0.0005 * (i + 1) * 0.4; const a = i * 2.4;
+    return { id: `s${i}`, kind: 'temple', tier: 'near', lat: pos.lat + r * Math.cos(a), lng: pos.lng + r * Math.sin(a) / Math.cos(pos.lat * Math.PI / 180) };
+  });
+  const none = new Set();
+  const q = dailyQuests(spots, '2026-10-13', 'walk', pos, none, none);
+  assert.ok(q.length >= 2 && q.length <= 3);
+  assert.ok(Math.abs(q[0].loop - 4000) <= 1000, `道のり ${q[0].loop}m`);
+  // 回る順：bestLoop で並べ直しても同じ順（か逆回り）で、同じ道のり
+  const r = bestLoop(pos, q);
+  assert.equal(r.meters, q[0].loop);
+  // 同じ日は同じ組み合わせ
+  assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, none, none).map((s) => s.id), q.map((s) => s.id));
+  // 自転車はこれまでどおり近い順3件、loop は付かない
+  const b = dailyQuests(spots, '2026-10-13', 'bike', pos, none, none);
+  assert.equal(b.length, 3);
+  assert.ok(b.every((s) => s.loop === undefined));
 });

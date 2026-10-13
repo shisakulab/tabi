@@ -80,6 +80,24 @@ export function canCheckIn(distance, accuracy) {
 }
 
 // 判子を押せるか：点の場所は 50m、広い場所は spot.radius（m）以内。誤差の扱いは canCheckIn と同じ
+// 下の帯に出す場所。①今いて押せる、今日まだ押していない場所 ②なければ、判子も「通った」もまだの場所でいちばん近いもの（maxMeters まで）。
+// 押したり通ったりした場所にいつまでも案内しないため。seen：前に押した・通った id、stampedToday：今日押した id
+export const NEXT_METERS = 2000;
+export function pickNear(pos, spots, accuracy, stampedToday, seen, maxMeters = NEXT_METERS) {
+  if (!pos) return null;
+  let here = null; let next = null;
+  for (const spot of spots) {
+    if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
+    const distance = distanceMeters(pos, spot);
+    if (canStamp(spot, distance, accuracy) && !stampedToday.has(spot.id)) {
+      if (!here || distance < here.distance) here = { spot, distance };
+    } else if (!seen.has(spot.id) && !stampedToday.has(spot.id) && distance <= maxMeters) {
+      if (!next || distance < next.distance) next = { spot, distance };
+    }
+  }
+  return here || next;
+}
+
 export function canStamp(spot, distance, accuracy) {
   const limit = Math.max(CHECKIN_METERS, Number(spot && spot.radius) || 0);
   const acc = Number.isFinite(accuracy) ? Math.max(0, accuracy) : 0;
@@ -166,17 +184,66 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
     : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
   const seen = new Set();
-  return spots
+  const cands = spots
     .filter((s) => {
       if (seen.has(s.id) || !Number.isFinite(s.lat) || !Number.isFinite(s.lng) || Array.isArray(s.seasons)) return false;
       seen.add(s.id);
       return !stampedBefore.has(s.id) || stampedToday.has(s.id);
     })
     .map((s) => ({ ...s, distance: distanceMeters(pos, s), daily: true }))
-    .filter((s) => s.distance <= range)
+    .filter((s) => s.distance <= range);
+  // 徒歩：回って戻るとちょうどいい運動量になる 2〜3か所を、回る順に。loop は道のりの見積もり（m）
+  if (mode === 'walk' && limit >= 2) {
+    const r = walkLoopQuests(cands, pos, day, hash);
+    if (r.spots.length) return r.spots.slice(0, limit).map((s) => ({ ...s, loop: r.meters }));
+  }
+  return cands
     .sort((a, b) => hash(day + a.id) - hash(day + b.id))
     .slice(0, limit)
     .sort((a, b) => a.distance - b.distance);
+}
+
+// 徒歩の今日のお題は、今いる所から2〜3か所を回って戻ると、ちょうどいい運動量になる組み合わせにする。
+// 目安：厚生労働省「健康づくりのための身体活動・運動ガイド2023」の成人 1日8,000歩。普段の生活の歩数もあるので、散歩は約4km（約5,700歩）を狙う。
+// 道は直線より長いので、直線距離に WALK_DETOUR を掛けて見積もる
+export const WALK_TARGET_METERS = 4000;
+export const WALK_DETOUR = 1.25;
+export const STEP_METERS = 0.7;
+// 今いる所 → 場所を順に → 今いる所、の直線距離がいちばん短い回り方 { order, meters }（meters は道のりの見積もり）
+export function bestLoop(pos, spots) {
+  const perm = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => perm([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
+  let best = null;
+  for (const order of perm(spots)) {
+    let d = 0; let at = pos;
+    for (const s of order) { d += distanceMeters(at, s); at = s; }
+    d += distanceMeters(at, pos);
+    if (!best || d < best.straight) best = { order, straight: d };
+  }
+  return best ? { order: best.order, meters: Math.round(best.straight * WALK_DETOUR) } : { order: [], meters: 0 };
+}
+// 候補から、回る道のりが target にいちばん近い 3か所（なければ 2か所）を選ぶ。同じくらいなら日付で決まる順。
+// 候補は日付で混ぜた先頭 pool 件に絞る（組み合わせが多すぎないように）
+export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METERS, pool = 24) {
+  const list = [...cands].sort((a, b) => hash(day + a.id) - hash(day + b.id)).slice(0, pool);
+  let best = null;
+  for (const k of [3, 2]) {
+    if (list.length < k) continue;
+    const idx = Array.from({ length: k }, (_, i) => i);
+    for (;;) {
+      const loop = bestLoop(pos, idx.map((i) => list[i]));
+      const score = Math.abs(loop.meters - target);
+      if (!best || score < best.score) best = { score, loop };
+      // 次の組み合わせ
+      let i = k - 1;
+      while (i >= 0 && idx[i] === list.length - k + i) i--;
+      if (i < 0) break;
+      idx[i]++;
+      for (let j = i + 1; j < k; j++) idx[j] = idx[j - 1] + 1;
+    }
+    if (best && best.score <= target * 0.25) break; // 3か所でちょうどよいものがあれば、それにする
+  }
+  if (!best) return { spots: [], meters: 0 };
+  return { spots: best.loop.order, meters: best.loop.meters };
 }
 
 // ---------- 一覧 ----------
@@ -260,6 +327,8 @@ export function shouldRemindBackup({ count, lastExportAt = 0, lastExportCount = 
 export const AUTO_DWELL_MS = 180000; // この間ずっと範囲内にいたら押す（2026-10-13：通っただけで押されるので全部の旅のしかたで滞在を条件に）
 
 // 印の種類を名前から当てる。spot.seal があればそれ。当てられなければ null
+// 印をもらわずに、写真とひとことだけ残す記録の種類
+export const MEMO_TYPE = '写真・メモ';
 export function sealTypeFor(spot) {
   if (!spot) return null;
   if (spot.seal) return spot.seal;
@@ -299,7 +368,8 @@ export function sealDraft({ spotId, visits = [], spotById, pos, acc, now = new D
     }
   }
   const spot = id ? spotById(id) : null;
-  return { spotId: id, type: (spot && sealTypeFor(spot)) || '御朱印', date };
+  // 印のない場所（銭湯・道の駅など）や場所を選ばないときは、写真とひとことだけの記録にする
+  return { spotId: id, type: (spot && sealTypeFor(spot)) || MEMO_TYPE, date };
 }
 
 // JPEG の EXIF から撮影日 'YYYY-MM-DD'（DateTimeOriginal、無ければ DateTime）。読めなければ null

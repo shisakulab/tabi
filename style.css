@@ -93,15 +93,15 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .hanko.empty { width: 32px; height: 32px; margin: 4px; border: 2px dashed var(--c); border-radius: 50%; background: rgba(255,255,255,.75); display: grid; place-items: center; }
 .hanko.empty .g { font-family: var(--serif); font-size: 15px; font-weight: 700; color: var(--c); opacity: .75; }
 /* 近所の場所（神社・銭湯など）はまだ押していないとき小さく出す */
-.hanko.near.empty { width: 22px; height: 22px; margin: 9px; border-width: 1.5px; }
-.hanko.near.empty .g { font-size: 11px; }
+.hanko.near.empty { width: 28px; height: 28px; margin: 6px; border-width: 1.5px; }
+.hanko.near.empty .g { font-size: 13px; }
 /* 通った（範囲に入ったが押していない）：点線を実線にして薄く色をつける */
 .hanko.empty.passed { border-style: solid; background: color-mix(in srgb, var(--c) 18%, #fff); }
 .hanko.empty.passed .g { opacity: 1; }
 /* まとめの丸（地図を引いたとき） */
 .group {
-  display: grid; place-items: center; border-radius: 50%; border: 2px dashed var(--ink2); background: rgba(255,255,255,.82);
-  font: 700 13px var(--serif); color: var(--ink);
+  display: grid; place-items: center; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--ink2) 55%, transparent); background: rgba(255,255,255,.45);
+  font: 700 11px var(--serif); color: var(--ink2);
 }
 .sdot { width: 12px; height: 12px; border-radius: 50%; background: var(--seal); border: 2px solid #fff; box-sizing: border-box; }
 /* 判子の色の見方（左下） */
@@ -117,6 +117,8 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 /* 季節の名所：四角い判子で区別する */
 .hanko.season.empty { border-radius: 6px; border-color: var(--seal); transform: rotate(-6deg); }
 .hanko.season.empty .g { color: var(--seal); }
+.hanko.season.off.empty { border-color: var(--c); opacity: .7; }
+.hanko.season.off.empty .g { color: var(--c); }
 .hanko.season .face { border-radius: 8px; background: var(--seal); transform: rotate(-6deg); }
 .hanko .cnt {
   position: absolute; right: -4px; bottom: -4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;

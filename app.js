@@ -2,9 +2,9 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits,
-  MODES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES,
+  MODES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
@@ -13,8 +13,9 @@ const WD_ATTR = '<a href="https://www.wikidata.org/" target="_blank" rel="noopen
 const TOKYO = { lat: 35.681236, lng: 139.767125 };
 const TIER_COLOR = { list: '#2b4c7e', near: '#7a8f5b' };
 const SEAL_COLOR = '#b8423a';
+const OFF_COLOR = '#8a9699'; // 見頃でない季節の名所
 const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で', plane: '飛行機で' };
-const SEAL_TYPES = ['御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
+const SEAL_TYPES = [MEMO_TYPE, '御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
 const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない。都心は数が多く、引くと地図が埋まる
 
@@ -277,9 +278,11 @@ function markPassed(pos, cands) {
 function hankoIcon(spot) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
-  const color = isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
+  // 季節の名所は、見頃の月だけ赤。見頃でない月にまだ押していなければ灰色（見頃でないのに赤く出ていて紛らわしかった）
+  const off = isSeason && !mine.length && !seasonOf(spot, now());
+  const color = off ? OFF_COLOR : isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
   const went = !mine.length && !!passed()[spot.id];
-  const cls = ['hanko', isSeason ? 'season' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
+  const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
   const node = mine.length
     ? h('div', { class: cls, style: `--c:${color}` }, h('div', { class: 'face' }, h('span', {}, mark)), mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
@@ -330,8 +333,10 @@ async function drawMap() {
     if (seq !== drawSeq) return;
     const inView = spotsIn(keys).filter((s) => b.contains([s.lat, s.lng]) && modeAllows(s, state.mode));
     // 一覧の場所は1つずつ。近所の場所は寄るまで（MIN_ZOOM_NEAR）近いものをまとめて数で出す
-    list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR), ...seasons].slice(0, 400);
-    groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near'), z);
+    // 押した・通った近所の場所は、寄っていなくても1つずつ出す（数の丸に埋もれていた）
+    const mineNear = (s) => s.tier === 'near' && (visitsOf(s.id).length > 0 || !!passed()[s.id]);
+    list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR || mineNear(s)), ...seasons].slice(0, 400);
+    groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near' && !mineNear(s)), z);
   }
   if (seq !== drawSeq) return;
   layer.clearLayers();
@@ -353,7 +358,7 @@ async function drawMap() {
 
 // まとめの丸。点線の丸に数を出す（まだ押していない場所の点線の判子と同じ見た目）
 function groupIcon(n) {
-  const size = n >= 1000 ? 52 : n >= 100 ? 44 : 36;
+  const size = n >= 1000 ? 44 : n >= 100 ? 36 : 28;
   const label = n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   return L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'group', style: `width:${size}px;height:${size}px` }, label), iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
 }
@@ -376,12 +381,12 @@ function tileGroups(b, z, nearOk) {
   return [...cells.values()].map((c) => ({ n: c.n, lat: c.lat / c.n, lng: c.lng / c.n }));
 }
 
-// 中くらいのズーム：画面で 64px 四方の升ごとに近所の場所をまとめる
+// 中くらいのズーム：画面で 96px 四方の升ごとに近所の場所をまとめる
 function pixelGroups(spots, z) {
   const cells = new Map();
   for (const s of spots) {
     const p = mainMap.project([s.lat, s.lng], z);
-    const ck = `${Math.floor(p.x / 64)}_${Math.floor(p.y / 64)}`;
+    const ck = `${Math.floor(p.x / 96)}_${Math.floor(p.y / 96)}`;
     const c = cells.get(ck) || { n: 0, lat: 0, lng: 0 };
     c.n++; c.lat += s.lat; c.lng += s.lng;
     cells.set(ck, c);
@@ -485,9 +490,9 @@ function openStamped(spot, season) {
   showSheet(null, [
     h('h2', { style: 'font-size:22px;text-align:center;margin:0 0 4px' }, season ? `季節の判子（${season.label}）` : '判子を押しました'),
     h('p', { class: 'sub', style: 'text-align:center' }, `${spot.name}（${n}回目）`),
-    h('p', { style: 'text-align:center;margin:8px 0 14px' }, '御朱印などをもらったなら、印を記録できます。'),
+    h('p', { style: 'text-align:center;margin:8px 0 14px' }, '写真とひとこと、御朱印などの印を残せます。'),
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, '印を記録する'),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, sealTypeFor(spot) ? '印・写真を記録する' : '写真・メモを残す'),
       h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'あとで')),
   ], () => sheetEl.classList.add('small'));
 }
@@ -511,9 +516,44 @@ function currentQuests() {
   const today = new Set(); const before = new Set();
   for (const v of state.visits) (sameDay(v, d) ? today : before).add(v.spotId);
   const used = new Set(monthly.map((s) => s.id));
-  const daily = dailyQuests(allLoaded().filter((s) => !used.has(s.id)), d, state.mode, state.pos, today, before, Math.min(3, QUEST_MAX - monthly.length));
+  const want = Math.min(3, QUEST_MAX - monthly.length);
+  if (!state.pos || !DAILY_MODES.includes(state.mode) || want <= 0) return monthly;
+  // 同じ日・同じ旅のしかたなら、前に選んだお題を使う（開き直すと読み込んだ区画や位置の揺れで顔ぶれが変わっていた）。
+  // 範囲の1.5倍より離れたものと、前に判子を押したものだけ入れ替える
+  const dayKey = d.toDateString();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(LS + 'daily.' + state.mode) || 'null'); } catch { /* 読めなければ選び直す */ }
+  if (!saved || saved.day !== dayKey || saved.mode !== state.mode || !Array.isArray(saved.items)) saved = { day: dayKey, mode: state.mode, items: [] };
+  const byId = new Map(allLoaded().map((s) => [s.id, s]));
+  const limit = MODES[state.mode].range * 1.5;
+  // 残すもの：範囲の1.5倍以内で、前の日に押していないもの。区画をまだ読んでいなければ、表示は待つが選び直さない
+  const keepItems = saved.items.filter((it) => !used.has(it.id) && distanceMeters(state.pos, it) <= limit && !(before.has(it.id) && !today.has(it.id)));
+  const kept = keepItems.filter((it) => byId.has(it.id)).map((it) => ({ ...byId.get(it.id), distance: distanceMeters(state.pos, it), daily: true }));
+  const skip = new Set([...used, ...keepItems.map((it) => it.id)]);
+  const need = want - keepItems.length;
+  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id)), d, state.mode, state.pos, today, before, need) : [];
+  // 徒歩は回る順（選んだときの順）のまま、自転車は近い順
+  let daily = [...kept, ...add];
+  let loop = saved.loop || 0;
+  if (add.length || keepItems.length !== saved.items.length) {
+    let items = [...keepItems, ...add.map((s) => ({ id: s.id, lat: s.lat, lng: s.lng }))];
+    if (state.mode === 'walk' && items.length) {
+      const r = bestLoop(state.pos, items);
+      items = r.order; loop = r.meters;
+    }
+    try { localStorage.setItem(LS + 'daily.' + state.mode, JSON.stringify({ day: dayKey, mode: state.mode, items, loop })); } catch { /* 保存できなくても続ける */ }
+    const rank = new Map(items.map((it, i) => [it.id, i]));
+    daily.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  } else {
+    const rank = new Map(saved.items.map((it, i) => [it.id, i]));
+    daily.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  }
+  if (state.mode !== 'walk') daily.sort((a, b) => a.distance - b.distance);
+  state.dailyLoop = state.mode === 'walk' && daily.length ? loop : 0;
   return [...monthly, ...daily];
 }
+// 散歩の道のりを「約4.1km・約5,900歩・約60分」に（時速4km）
+const loopText = (m) => `約${(m / 1000).toFixed(1)}km・約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩・約${Math.round(m / 4000 * 60 / 5) * 5}分`;
 function questDone(spot) {
   const d = now();
   if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
@@ -530,7 +570,7 @@ function drawQuest() {
   questEl.replaceChildren(
     h('div', { class: 'qtop' },
       h('b', { class: 'qtitle' }, `${d.getMonth() + 1}月のお題`),
-      h('span', { class: 'muted' }, qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
+      h('span', { class: 'muted' }, state.dailyLoop ? `回って戻ると${loopText(state.dailyLoop).split('・')[0]}` : qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
       qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null),
     qs.length
       ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : '') },
@@ -546,6 +586,7 @@ function openQuests() {
   showSheet(openQuests, [
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, `${now().getMonth() + 1}月のお題`),
     h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '徒歩・自転車では、近くのまだ行っていない場所から「今日のお題」も毎日選びます。' : ''}`),
+    state.dailyLoop ? h('p', { class: 'sub' }, `今日の散歩：上から順に回って戻ると ${loopText(state.dailyLoop)}（道は直線の1.25倍で見積もり）。1日8,000歩（厚生労働省のガイドの目安）のうち、普段の歩数を引いたくらいの量です。`) : null,
     h('ul', { class: 'list' }, qs.map((s) => h('li', {},
       h('button', { class: 'rec nophoto', type: 'button', onclick: () => { closeSheet(); focusSpot(s); } },
         h('div', {},
@@ -681,8 +722,11 @@ async function updateNear() {
   const keys = tilesForBounds(pos.lat - 0.02, pos.lng - 0.025, pos.lat + 0.02, pos.lng + 0.025);
   await ensureTiles(keys);
   const cands = [...spotsIn(keys), ...state.seasonSpots].filter((s) => Number.isFinite(s.lat));
-  const best = nearestSpot(pos, cands);
-  drawNear(best && best.distance <= Math.max(NEAR_METERS, (best.spot.radius || 0) + 100) ? best : null);
+  // 押した・通った場所は案内しない。今いて押せる場所がなければ、まだ行っていない中でいちばん近い場所へ矢印を出す
+  const d = now();
+  const today = new Set(); const seen = new Set(Object.keys(passed()));
+  for (const v of state.visits) (sameDay(v, d) ? today : seen).add(v.spotId);
+  drawNear(pickNear(pos, cands, state.acc, today, seen));
   // 今日のお題は旅のしかたの範囲（自転車なら 10km）から選ぶので、その区画も読んでから描き直す
   if (DAILY_MODES.includes(state.mode)) {
     const dLat = MODES[state.mode].range / 111000; const dLng = dLat / Math.cos((pos.lat * Math.PI) / 180);
@@ -697,7 +741,7 @@ function drawNear(best) {
     nearSig = '';
     nearEl.replaceChildren(...[
       h('div', { class: 'nearmain' }, h('span', { class: 'nt', style: 'white-space:normal' }, note.msg)),
-      sealTypeFor(note.spot) ? h('button', { class: 'nearpush', type: 'button', onclick: () => { recordDraft.spotId = note.spot.id; openRecord(); } }, '印を記録') : null,
+      h('button', { class: 'nearpush', type: 'button', onclick: () => { recordDraft.spotId = note.spot.id; openRecord(); } }, sealTypeFor(note.spot) ? '印を記録' : '写真・メモ'),
       h('button', { class: 'nearpush', type: 'button', onclick: () => undoAuto(note) }, '取り消す')].filter(Boolean));
     nearEl.hidden = false;
     document.body.classList.add('hasnear');
@@ -712,6 +756,7 @@ function drawNear(best) {
   const sig = [spot.id, Math.round(distance / 5), deg, can, done].join('|');
   if (sig === nearSig && !nearEl.hidden) return;
   nearSig = sig;
+  if (can && !done) alertNear(spot, season);
   nearEl.replaceChildren(...[
     h('button', { class: 'nearmain', type: 'button', onclick: () => focusSpot(spot) },
       h('span', { class: 'arrow', style: `transform:rotate(${deg}deg)`, 'aria-hidden': 'true' }, '↑'),
@@ -719,6 +764,36 @@ function drawNear(best) {
     can && !done ? h('button', { class: 'nearpush', type: 'button', onclick: () => stamp(spot) }, season ? `季節の判子を押す（${season.label}）` : '判子を押す') : null].filter(Boolean));
   nearEl.hidden = false;
   document.body.classList.add('hasnear');
+}
+
+// 判子を押せる範囲に入ったら1回だけ知らせる（同じ場所は1日1回）。Android は振動、iPhone は振動がないので通知（ホーム画面に追加したときだけ出る）
+const alerted = new Set();
+async function alertNear(spot, season) {
+  const key = `${spot.id}|${now().toDateString()}`;
+  if (alerted.has(key) || !setting('nearalert')) return;
+  alerted.add(key);
+  navigator.vibrate?.([120, 80, 120]);
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const body = season ? `季節の判子を押せます（${season.label}）` : '判子を押せます';
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const opts = { body, tag: 'near-' + spot.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' };
+    if (reg) await reg.showNotification(`${spot.name}に着きました`, opts);
+    else new Notification(`${spot.name}に着きました`, opts);
+  } catch { /* 通知を出せない端末では振動だけ */ }
+}
+async function toggleNearAlert(on) {
+  setSetting('nearalert', on);
+  if (on && 'Notification' in window && Notification.permission === 'default') {
+    try { await Notification.requestPermission(); } catch { /* 古い Safari はコールバック形式。振動だけで続ける */ }
+    openBook();
+  }
+}
+function nearAlertNote() {
+  if (!('Notification' in window)) return 'この端末では通知を出せないので、振動だけです（iPhone はホーム画面に追加すると通知が出せます）。';
+  if (Notification.permission === 'denied') return '通知がブロックされています。端末の設定で許可すると通知も出ます。';
+  if (Notification.permission === 'default') return 'オンにすると通知の許可を聞きます。';
+  return '画面を消している間は位置を取れないので知らせられません。';
 }
 
 // ---------- 帳面 ----------
@@ -840,6 +915,9 @@ function bookMore() {
         h('input', { type: 'checkbox', checked: setting('auto'), onchange: (e) => setSetting('auto', e.target.checked) }), '自動で判子を押す（アプリを開いている間）'),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('vibrate'), onchange: (e) => setSetting('vibrate', e.target.checked) }), '押したら振動する'),
+      h('label', { style: 'display:flex;gap:8px;align-items:center' },
+        h('input', { type: 'checkbox', checked: setting('nearalert'), onchange: (e) => toggleNearAlert(e.target.checked) }), '判子を押せる場所に着いたら知らせる（振動・通知）'),
+      h('p', { class: 'muted', style: 'margin:0' }, nearAlertNote()),
       h('p', { class: 'muted', style: 'margin:0' }, '画面を消している間は位置を取れないので押せません。')),
     h('p', { class: 'muted' }, 'データはこの端末の中だけにあります。機種変更の前に書き出してください。'),
     h('p', { class: 'muted' }, '出典：地図 ' + '国土地理院（淡色地図）／場所のデータ Wikidata（CC0）。位置情報は端末の外には送りません。'),
@@ -894,7 +972,7 @@ function openRecord() {
   spotSel.addEventListener('change', () => {
     picked = null; syncPref();
     const s = spotSel.value ? spotById(spotSel.value) : null;
-    if (s && !typeTouched) { type = sealTypeFor(s) || '御朱印'; drawChips(); }
+    if (s && !typeTouched) { type = sealTypeFor(s) || MEMO_TYPE; drawChips(); }
   });
   syncPref();
   drawChips();
@@ -934,8 +1012,8 @@ function openRecord() {
     } catch (err) { save.disabled = false; toast('保存できませんでした：' + (err && err.message ? err.message : err)); }
   } }, '記録する');
   showSheet(null, [h('div', { class: 'form' },
-    h('h2', { style: 'font-size:20px' }, '印を記録する'),
-    h('p', { class: 'sub', style: 'margin:0' }, '御朱印などをいただいた参拝・乗船の記録です。'),
+    h('h2', { style: 'font-size:20px' }, '記録する'),
+    h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。御朱印などの印をいただいたら、種類を選んでください。'),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '種類'), chips),
     h('label', { class: 'f' }, '日付', date),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },

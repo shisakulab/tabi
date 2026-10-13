@@ -1,6 +1,6 @@
 // キャッシュ優先。ファイルを変えたら VERSION を上げる
 // Leaflet は vendor/ に同梱。地図タイルはキャッシュしない。data/ は取得時にキャッシュ
-const VERSION = 'tabigoyomi-v12';
+const VERSION = 'tabigoyomi-v13';
 const FILES = [
   './',
   './index.html',
@@ -45,4 +45,13 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
+});
+
+// 「着きました」の通知を押したら、開いているアプリに戻る（なければ開く）
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const c = list.find((w) => 'focus' in w);
+    return c ? c.focus() : self.clients.openWindow('./');
+  }));
 });
