@@ -2,9 +2,9 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate,
-  MODES, NEAR_KINDS, PREFS, NEAR_METERS,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits,
+  MODES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
@@ -153,6 +153,14 @@ async function loadCatalog() {
     };
   });
   state.lists.push({ key: 'seasons', name: '季節の名所', note: '見頃の月に行くと季節の判子' });
+  // 国宝を場所ごとにまとめたことなどで spotId が変わった判子を救う（lists.aliases：子 id → 親 id）
+  const remapped = remapVisits(state.visits, lists.aliases || {});
+  if (remapped.changed) {
+    for (let i = 0; i < remapped.visits.length; i++) {
+      if (remapped.visits[i] !== state.visits[i]) await db.put('visits', remapped.visits[i]);
+    }
+    state.visits = remapped.visits;
+  }
 }
 
 // 区画ファイル data/spots/<key>.json
@@ -494,13 +502,25 @@ function drawModes() {
 }
 
 // ---------- 今月のお題 ----------
+// 見頃の名所（月のお題）に、徒歩・自転車なら近所の「今日のお題」を足して最大5件
+const QUEST_MAX = 5;
+const sameDay = (v, d) => new Date(v.at).toDateString() === d.toDateString();
 function currentQuests() {
-  return monthlyQuests(state.seasonSpots, now(), state.mode, state.pos);
+  const d = now();
+  const monthly = monthlyQuests(state.seasonSpots, d, state.mode, state.pos);
+  const today = new Set(); const before = new Set();
+  for (const v of state.visits) (sameDay(v, d) ? today : before).add(v.spotId);
+  const used = new Set(monthly.map((s) => s.id));
+  const daily = dailyQuests(allLoaded().filter((s) => !used.has(s.id)), d, state.mode, state.pos, today, before, Math.min(3, QUEST_MAX - monthly.length));
+  return [...monthly, ...daily];
 }
 function questDone(spot) {
   const d = now();
+  if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
   return seasonalVisitsOf(spot.id).some((v) => sameMonth(v, d));
 }
+const questMark = (s) => (s.daily ? '今日' : s.seasons[0].mark);
+const questLabel = (s) => (s.daily ? `今日のお題・${spotTags(s)[0] || '近所'}` : s.seasons[0].label);
 function drawQuest() {
   const d = now();
   const qs = currentQuests();
@@ -510,11 +530,11 @@ function drawQuest() {
   questEl.replaceChildren(
     h('div', { class: 'qtop' },
       h('b', { class: 'qtitle' }, `${d.getMonth() + 1}月のお題`),
-      h('span', { class: 'muted' }, 'いま見頃の場所'),
+      h('span', { class: 'muted' }, qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
       qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null),
     qs.length
       ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : '') },
-        h('span', { class: 'qm' }, s.seasons[0].mark),
+        h('span', { class: 'qm' + (s.daily ? ' daily' : '') }, questMark(s)),
         h('span', { class: 'qn' }, s.name),
         s.distance !== null ? h('span', { class: 'qd' }, fmtDist(s.distance)) : null)))
       : h('p', { class: 'muted', style: 'margin:4px 0 0' }, state.pos
@@ -525,11 +545,11 @@ function openQuests() {
   const qs = currentQuests();
   showSheet(openQuests, [
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, `${now().getMonth() + 1}月のお題`),
-    h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。`),
+    h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '徒歩・自転車では、近くのまだ行っていない場所から「今日のお題」も毎日選びます。' : ''}`),
     h('ul', { class: 'list' }, qs.map((s) => h('li', {},
       h('button', { class: 'rec nophoto', type: 'button', onclick: () => { closeSheet(); focusSpot(s); } },
         h('div', {},
-          h('div', { class: 't' }, `${s.name}　${s.seasons[0].label}${questDone(s) ? '（押した）' : ''}`),
+          h('div', { class: 't' }, `${s.name}　${questLabel(s)}${questDone(s) ? '（押した）' : ''}`),
           h('div', { class: 'n' }, [s.pref, s.distance !== null ? fmtDist(s.distance) : ''].filter(Boolean).join('・')),
           s.note ? h('div', { class: 'n', style: 'white-space:normal' }, s.note) : null))))),
     qs.length ? null : h('p', { class: 'muted' }, '今月が見頃の名所は、まだ登録がありません。'),
@@ -663,6 +683,12 @@ async function updateNear() {
   const cands = [...spotsIn(keys), ...state.seasonSpots].filter((s) => Number.isFinite(s.lat));
   const best = nearestSpot(pos, cands);
   drawNear(best && best.distance <= Math.max(NEAR_METERS, (best.spot.radius || 0) + 100) ? best : null);
+  // 今日のお題は旅のしかたの範囲（自転車なら 10km）から選ぶので、その区画も読んでから描き直す
+  if (DAILY_MODES.includes(state.mode)) {
+    const dLat = MODES[state.mode].range / 111000; const dLng = dLat / Math.cos((pos.lat * Math.PI) / 180);
+    await ensureTiles(tilesForBounds(pos.lat - dLat, pos.lng - dLng, pos.lat + dLat, pos.lng + dLng));
+    drawQuest();
+  }
 }
 function drawNear(best) {
   if (autoNote && best && best.spot.id !== autoNote.spot.id) autoNote = null;
@@ -709,22 +735,44 @@ function openBook() {
 
 function allListSpots() { return [...state.catalog.values(), ...state.seasonSpots]; }
 
+// これより長い一覧（道の駅・国宝など）は、都道府県ごとに畳んで出す
+const FOLD_OVER = 120;
+// 北から順（JIS の都道府県コード順）
+const PREF_ORDER = ['北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
+  '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'];
+
 function bookSpots() {
   const spots = allListSpots();
   return state.lists.map((l) => {
     const p = listProgress(state.visits, spots, l.key);
     const isSeason = l.key === 'seasons';
-    return h('section', {},
-      h('div', { class: 'listhead' }, h('b', {}, l.name), h('span', { class: 'muted' }, l.note || ''), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
-      p.total ? h('div', { class: 'masus' }, p.cells.map((c) => h('button', {
-        class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord ? '' : ' nocoord') + (isSeason ? ' season' : ''), type: 'button',
-        style: `--c:${TIER_COLOR.list}`, title: c.name,
-        onclick: () => toast(`${c.name}${c.pref ? `（${c.pref}）` : ''}${c.hasCoord ? '' : '　位置が未登録のため判子は押せません'}`),
-      }, glyphOf(c.name)))) : h('p', { class: 'muted' }, 'まだ登録がありません'),
-      p.total ? h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, '名前の一覧'),
-        p.cells.map((c) => h('div', { class: 'row' + (c.got ? ' got' : '') },
-          h('span', {}, `${c.got ? '● ' : ''}${c.name}`),
-          h('span', { class: 'muted' }, c.hasCoord ? c.pref : `${c.pref} 位置未登録`)))) : null);
+    const masus = (cells) => h('div', { class: 'masus' }, cells.map((c) => h('button', {
+      class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord ? '' : ' nocoord') + (isSeason ? ' season' : ''), type: 'button',
+      style: `--c:${TIER_COLOR.list}`, title: c.name,
+      onclick: () => toast(`${c.name}${c.pref ? `（${c.pref}）` : ''}${c.hasCoord ? '' : '　位置が未登録のため判子は押せません'}`),
+    }, glyphOf(c.name))));
+    const names = (cells, summary) => h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, summary),
+      cells.map((c) => h('div', { class: 'row' + (c.got ? ' got' : '') },
+        h('span', {}, `${c.got ? '● ' : ''}${c.name}`),
+        h('span', { class: 'muted' }, c.hasCoord ? c.pref : `${c.pref} 位置未登録`))));
+    const head = h('div', { class: 'listhead' }, h('b', {}, l.name), h('span', { class: 'muted' }, l.note || ''), h('span', { class: 'n' }, `${p.count} / ${p.total}`));
+    if (!p.total) return h('section', {}, head, h('p', { class: 'muted' }, 'まだ登録がありません'));
+    if (p.total <= FOLD_OVER) return h('section', {}, head, masus(p.cells), names(p.cells, '名前の一覧'));
+    const byPref = new Map();
+    for (const c of p.cells) {
+      const k = PREF_ORDER.includes(c.pref) ? c.pref : '';
+      if (!byPref.has(k)) byPref.set(k, []);
+      byPref.get(k).push(c);
+    }
+    const groups = [...PREF_ORDER, ''].filter((k) => byPref.has(k)).map((k) => {
+      const cells = byPref.get(k);
+      const got = cells.filter((c) => c.got).length;
+      return h('details', { class: 'prefgroup' + (got ? ' got' : '') },
+        h('summary', {}, h('span', {}, k || '都道府県不明'), h('span', { class: 'n' }, `${got} / ${cells.length}`)),
+        masus(cells), names(cells, '名前'));
+    });
+    return h('section', {}, head, h('div', { class: 'prefgroups' }, groups));
   });
 }
 

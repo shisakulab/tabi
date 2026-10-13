@@ -75,6 +75,7 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none;
   border: 1.5px dashed var(--seal); color: var(--seal); font: 700 13px var(--serif);
 }
+.qchip .qm.daily { font-size: 10px; letter-spacing: -.05em; }
 .qchip.got .qm { background: var(--seal); color: #fff; border-style: solid; }
 .qchip .qn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qchip .qd { color: var(--ink2); }
@@ -222,6 +223,15 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .spotlist { margin-top: 8px; display: grid; gap: 4px; font-size: 14px; }
 .spotlist .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .spotlist .row.got { font-weight: 700; }
+.prefgroups { display: grid; }
+.prefgroup { border-bottom: 1px solid var(--line); }
+.prefgroup > summary { list-style: none; display: flex; gap: 8px; align-items: center; min-height: 40px; cursor: pointer; font-size: 15px; }
+.prefgroup > summary .n { margin-left: auto; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.prefgroup > summary::-webkit-details-marker { display: none; }
+.prefgroup > summary::after { content: '›'; color: var(--ink2); transition: transform .15s; }
+.prefgroup[open] > summary::after { transform: rotate(90deg); }
+.prefgroup.got > summary { font-weight: 700; }
+.prefgroup[open] { padding-bottom: 10px; }
 .prefgrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 8px 0 14px; }
 .pref {
   aspect-ratio: 1; border: 1px solid var(--line); border-radius: 5px; display: grid; place-items: center; align-content: center;

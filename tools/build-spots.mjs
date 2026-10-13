@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { tileKey } from '../logic.js';
+import { tileKey, distanceMeters } from '../logic.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = path.join(root, 'tools', '.cache');
@@ -31,7 +31,7 @@ const LISTS = [
   { key: 'taki100', name: '日本の滝百選', note: '1990年選定', radius: 150, cond: '?s wdt:P361 wd:Q40172600 .' },
   // 国宝は美術工芸品も含む。美術品は所蔵館の位置で登録されていて1か所に何十件も重なるので、
   // 所蔵（P195）があるものと、所在地（P276）が博物館のものを除く（残りはほぼ建造物）
-  { key: 'kokuho', name: '国宝', note: '国宝の建造物', radius: 150,
+  { key: 'kokuho', name: '国宝', note: '国宝の建造物（同じ寺社・城の建物は1つにまとめる）', radius: 150,
     cond: '?s wdt:P1435 wd:Q1139795 ; wdt:P625 [] . FILTER NOT EXISTS { ?s wdt:P195 [] } FILTER NOT EXISTS { ?s wdt:P276 ?m . ?m wdt:P31/wdt:P279? wd:Q33506 }' },
   { key: 'ichinomiya', name: '一宮', note: '各国の一宮（諸説あるものを含む）', radius: 150, cond: '?s wdt:P13723 wd:Q1656379 ; wdt:P625 [] .' },
   { key: 'michinoeki', name: '道の駅', note: '国土交通省登録', radius: 150, cond: '?s wdt:P31 wd:Q1187691 .' },
@@ -129,8 +129,32 @@ function parsePoint(v) {
   return m ? { lat: Number(m[2]), lng: Number(m[1]) } : null;
 }
 
+// 都道府県が Wikidata で取れない item を座標から補う（国土地理院の逆ジオコーダ）。結果は id → 都道府県（取れなければ空）でキャッシュ
+const GSI_CACHE_FILE = path.join(CACHE, 'gsi-pref.json');
+async function loadGsiCache() {
+  try { return JSON.parse(await readFile(GSI_CACHE_FILE, 'utf8')); } catch { return {}; }
+}
+async function gsiPrefFor(id, lat, lng, cache) {
+  if (Object.prototype.hasOwnProperty.call(cache, id)) return cache[id];
+  let pref = '';
+  try {
+    const res = await fetch(`https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?lat=${lat}&lon=${lng}`, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
+    if (res.ok) {
+      const json = await res.json();
+      const muniCd = json && json.results && json.results.muniCd;
+      const code = muniCd ? Number(muniCd.slice(0, 2)) : 0;
+      if (code >= 1 && code <= PREF_ISO.length) pref = PREF_ISO[code - 1];
+    }
+  } catch { /* 海上などで取れなければ空のままキャッシュする */ }
+  cache[id] = pref;
+  await mkdir(CACHE, { recursive: true });
+  await writeFile(GSI_CACHE_FILE, JSON.stringify(cache));
+  await sleep(300);
+  return pref;
+}
+
 // 1つの一覧を取る：[{ id, name, lat, lng, pref }]（id 重複は1つに）
-async function fetchList(list) {
+async function fetchList(list, gsiCache) {
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }
     OPTIONAL { ?s rdfs:label ?l FILTER(LANG(?l) = "ja") } }`, `${list.key}-base`);
@@ -152,8 +176,91 @@ async function fetchList(list) {
     if (p && it.lat === null) { it.lat = p.lat; it.lng = p.lng; }
     items.set(id, it);
   }
-  return [...items.values()].filter((it) => it.name) // 日本語の名前がないものは載せない
+  const result = [...items.values()].filter((it) => it.name) // 日本語の名前がないものは載せない
     .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  for (const it of result) {
+    if (!it.pref && it.lat !== null) it.pref = await gsiPrefFor(it.id, it.lat, it.lng, gsiCache);
+  }
+  return result;
+}
+
+// 国宝：建物ごと（P1435=Q1139795）を、P361（〜の一部）の親が1つに決まるものは親ごとにまとめる。
+// まとめない：親が複数ある建物、親の子が1件だけ（まとめる意味がない）、親が一覧・集合（世界遺産やこの一覧自体）
+const KOKUHO_LIST_EXCLUDE = new Set(['Q1139439', 'Q30927700', 'Q10917783', 'Q40172600']); // 100名城・続100名城・名水百選・滝百選
+const WORLD_HERITAGE_QID = 'Q9259';
+const GROUP_MAX_METERS = 1500;
+function commonPrefix(names) {
+  if (!names.length) return '';
+  let p = names[0];
+  for (const n of names.slice(1)) {
+    let i = 0;
+    while (i < p.length && i < n.length && p[i] === n[i]) i++;
+    p = p.slice(0, i);
+  }
+  return p.trim();
+}
+async function fetchKokuhoGroups(items) {
+  const ids = items.map((it) => it.id);
+  const parentRows = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    parentRows.push(...await sparql(`SELECT ?s ?p WHERE { VALUES ?s { ${ids.slice(i, i + 300).map((q) => 'wd:' + q).join(' ')} } ?s wdt:P361 ?p . }`,
+      i ? `kokuho-p361-${i}` : 'kokuho-p361'));
+  }
+  const parentsOf = new Map(); // child id → Set(親 id)
+  for (const r of parentRows) {
+    const child = qidOf(r.s); const parent = qidOf(r.p);
+    if (!parentsOf.has(child)) parentsOf.set(child, new Set());
+    parentsOf.get(child).add(parent);
+  }
+  const byParent = new Map(); // 親が1つに決まる建物だけ、親 id → [子 item]
+  for (const it of items) {
+    const parents = parentsOf.get(it.id);
+    if (parents && parents.size === 1) {
+      const p = [...parents][0];
+      if (!byParent.has(p)) byParent.set(p, []);
+      byParent.get(p).push(it);
+    }
+  }
+  const candidateParents = [...byParent.entries()].filter(([, kids]) => kids.length > 1).map(([p]) => p);
+  const parentInfo = new Map();
+  for (let i = 0; i < candidateParents.length; i += 300) {
+    const chunk = candidateParents.slice(i, i + 300);
+    const rows = await sparql(`SELECT ?s ?l ?c ?type WHERE { VALUES ?s { ${chunk.map((q) => 'wd:' + q).join(' ')} }
+      OPTIONAL { ?s rdfs:label ?l FILTER(LANG(?l) = "ja") }
+      OPTIONAL { ?s wdt:P625 ?c }
+      OPTIONAL { ?s wdt:P31 ?type } }`, i ? `kokuho-parent-${i}` : 'kokuho-parent');
+    for (const r of rows) {
+      const id = qidOf(r.s);
+      const cur = parentInfo.get(id) || { name: '', point: null, types: new Set() };
+      if (r.l && !cur.name) cur.name = r.l.value;
+      if (r.c) { const p = parsePoint(r.c.value); if (p) cur.point = p; }
+      if (r.type) cur.types.add(qidOf(r.type));
+      parentInfo.set(id, cur);
+    }
+  }
+  const groupedIds = new Set(); // まとめられた子 id
+  const aliases = {}; // 子 id → 親 id（判子の引っ越し用）
+  const extra = []; // まとめた親の item
+  const excluded = []; // まとめなかった親（一覧・集合）の報告
+  for (const [parent, kids] of byParent.entries()) {
+    if (kids.length <= 1) continue; // 子が1件だけならまとめない
+    const info = parentInfo.get(parent);
+    const isExcluded = !info || KOKUHO_LIST_EXCLUDE.has(parent) || info.types.has(WORLD_HERITAGE_QID);
+    if (isExcluded) { excluded.push({ id: parent, name: info ? info.name : '', count: kids.length }); continue; }
+    const center = info.point || { lat: kids.reduce((s, k) => s + k.lat, 0) / kids.length, lng: kids.reduce((s, k) => s + k.lng, 0) / kids.length };
+    const farthest = Math.max(...kids.map((k) => distanceMeters(center, k)));
+    // 子が離れすぎている親（古都京都の文化財のような、別々の寺社の集まり）はまとめない。半径は 500m までなので、まとめると押せない建物が出る
+    if (farthest > GROUP_MAX_METERS) { excluded.push({ id: parent, name: info.name, count: kids.length, farthest: Math.round(farthest) }); continue; }
+    for (const k of kids) { groupedIds.add(k.id); aliases[k.id] = parent; }
+    const radius = Math.min(500, Math.max(150, Math.round(farthest + 50)));
+    const pref = (kids.find((k) => k.pref) || {}).pref || '';
+    const name = info.name || commonPrefix(kids.map((k) => k.name)) || kids[0].name;
+    extra.push({ id: parent, name, lat: center.lat, lng: center.lng, pref, radius });
+  }
+  // 親そのものも国宝として一覧にある（法隆寺・姫路城など）なら、まとめた方だけ残す
+  const extraIds = new Set(extra.map((e) => e.id));
+  const remaining = items.filter((it) => !groupedIds.has(it.id) && !extraIds.has(it.id));
+  return { items: [...remaining, ...extra], aliases, excluded };
 }
 
 // 季節の名所の座標：名前で wbsearchentities（日本語）→ 候補の座標と都道府県を SPARQL で調べ、都道府県が合う最初の候補を使う。
@@ -226,17 +333,29 @@ async function main() {
   const spots = new Map(); // id → [id, kind, name, lat, lng, tier, radius, lists, pref]
   const listsOut = [];
   const counts = {};
+  const gsiCache = await loadGsiCache();
+  let kokuhoAliases = {};
   for (const list of LISTS) {
-    const items = await fetchList(list);
+    let items = await fetchList(list, gsiCache);
+    if (list.key === 'kokuho') {
+      const before = items.length;
+      const grouped = await fetchKokuhoGroups(items);
+      items = grouped.items;
+      kokuhoAliases = grouped.aliases;
+      const groupCount = new Set(Object.values(grouped.aliases)).size;
+      console.log(`国宝: 建物ごと ${before} 件 → 場所ごと ${items.length} 件（${groupCount} 件の場所に子 ${Object.keys(grouped.aliases).length} 件をまとめ）`);
+      if (grouped.excluded.length) console.log(['国宝: まとめなかった親（一覧・集合）:', ...grouped.excluded.map((e) => `${e.name || e.id}（${e.id}、子 ${e.count} 件${e.farthest ? `、いちばん遠い子 ${e.farthest}m` : ""}）`)].join('\n  '));
+    }
     counts[list.key] = { total: items.length, withCoord: items.filter((i) => i.lat !== null).length };
     console.log(`${list.name}: ${items.length} 件（座標あり ${counts[list.key].withCoord}）`);
     listsOut.push({ key: list.key, name: list.name, note: list.note, items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0]) });
     for (const it of items) {
       if (it.lat === null) continue;
       const cur = spots.get(it.id);
-      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, 'list', list.radius, [list.key], it.pref]); continue; }
-      cur[7].push(list.key);
-      cur[6] = Math.max(cur[6], list.radius);
+      const radius = it.radius || list.radius;
+      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, 'list', radius, [list.key], it.pref]); continue; }
+      if (!cur[7].includes(list.key)) cur[7].push(list.key);
+      cur[6] = Math.max(cur[6], radius);
       if (!cur[8]) cur[8] = it.pref;
     }
   }
@@ -264,8 +383,8 @@ async function main() {
     tileCounts: Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]])),
     shape: '[id, kind, name, lat, lng, tier, radius, lists, pref]',
   }));
-  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0)]
-  await writeFile(path.join(OUT, 'lists.json'), JSON.stringify({ lists: listsOut }));
+  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0)]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
+  await writeFile(path.join(OUT, 'lists.json'), JSON.stringify({ lists: listsOut, aliases: kokuhoAliases }));
   console.log(`地点 ${spots.size} 件、区画 ${tiles.size} 個`);
   const sc = await fetchSeasonCoords();
   console.log('季節の名所の座標: ' + sc.got + ' / ' + sc.total);

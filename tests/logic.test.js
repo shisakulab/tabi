@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -103,6 +103,17 @@ test('groupByDay / stampedOn / shouldRemindBackup', () => {
   assert.equal(shouldRemindBackup({ count: 3, lastExportCount: 0 }), false);
 });
 
+test('remapVisits: aliases で spotId を張り替える', () => {
+  const visits = [{ spotId: 'a' }, { spotId: 'b' }, { spotId: 'c' }];
+  const r = remapVisits(visits, { a: 'parent', c: 'c' });
+  assert.deepEqual(r.visits.map((v) => v.spotId), ['parent', 'b', 'c']);
+  assert.equal(r.changed, 1);
+  assert.equal(visits[0].spotId, 'a'); // 元の配列は変えない
+  const none = remapVisits(visits, {});
+  assert.equal(none.changed, 0);
+  assert.equal(none.visits, visits); // 変える必要がなければ同じ配列を返す
+});
+
 test('sealTypeFor: seal 優先、名前から当てる', () => {
   assert.equal(sealTypeFor({ name: '姫路城' }), '御城印');
   assert.equal(sealTypeFor({ name: '首里城跡' }), '御城印');
@@ -170,4 +181,22 @@ test('readExifDate: II / MM / なし / 壊れ', () => {
   assert.equal(readExifDate(new Uint8Array([1, 2, 3]).buffer), null);
   assert.equal(readExifDate(makeJpeg(true).slice(0, 30)), null);
   assert.equal(readExifDate(new ArrayBuffer(0)), null);
+});
+
+test('dailyQuests: 徒歩・自転車だけ、範囲内のまだ押していない場所から、同じ日は同じ顔ぶれ', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  const spots = Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, kind: 'shrine', tier: 'near', lat: 35.68 + i * 0.001, lng: 139.76 }));
+  spots.push({ id: 'far', kind: 'shrine', tier: 'near', lat: 36.5, lng: 139.76 });
+  spots.push({ id: 'season', kind: 'x', tier: 'list', lat: 35.68, lng: 139.76, seasons: [{ months: [10] }] });
+  const none = new Set();
+  const a = dailyQuests(spots, '2026-10-13', 'walk', pos, none, none);
+  assert.equal(a.length, 3);
+  assert.ok(a.every((s) => s.daily && s.distance <= 2000 && s.id !== 'far' && s.id !== 'season'));
+  assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, none, none).map((s) => s.id), a.map((s) => s.id));
+  assert.equal(dailyQuests(spots, '2026-10-13', 'car', pos, none, none).length, 0);
+  assert.equal(dailyQuests(spots, '2026-10-13', 'walk', null, none, none).length, 0);
+  // 前に押した場所は出さない。今日押した場所は残す
+  const before = new Set(a.map((s) => s.id));
+  assert.ok(dailyQuests(spots, '2026-10-13', 'walk', pos, none, before).every((s) => !before.has(s.id)));
+  assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, before, before).map((s) => s.id), a.map((s) => s.id));
 });

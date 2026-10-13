@@ -155,6 +155,30 @@ export function monthlyQuests(spots, date, mode, pos, limit = 5) {
   return withD.filter((s) => s.distance <= range && modeAllows(s, mode)).slice(0, limit);
 }
 
+// 徒歩・自転車で見頃の名所が範囲に少ないとき、近くのまだ判子のない場所から「今日のお題」を選ぶ。
+// 日付と id から決まる順で選ぶので、同じ日のうちは顔ぶれが変わらない（歩いて範囲が動いた分だけ入れ替わる）。
+// stampedToday：今日判子を押した id（押した印を付けて残す）、stampedBefore：前に押した id（出さない）
+export const DAILY_MODES = ['walk', 'bike'];
+export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore, limit = 3) {
+  if (!pos || !DAILY_MODES.includes(mode) || limit <= 0) return [];
+  const range = MODES[mode].range;
+  const day = typeof date === 'string' ? date.slice(0, 10)
+    : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
+  const seen = new Set();
+  return spots
+    .filter((s) => {
+      if (seen.has(s.id) || !Number.isFinite(s.lat) || !Number.isFinite(s.lng) || Array.isArray(s.seasons)) return false;
+      seen.add(s.id);
+      return !stampedBefore.has(s.id) || stampedToday.has(s.id);
+    })
+    .map((s) => ({ ...s, distance: distanceMeters(pos, s), daily: true }))
+    .filter((s) => s.distance <= range)
+    .sort((a, b) => hash(day + a.id) - hash(day + b.id))
+    .slice(0, limit)
+    .sort((a, b) => a.distance - b.distance);
+}
+
 // ---------- 一覧 ----------
 // 見頃（seasons）を持つ場所は、季節の判子（seasonal）を押したときだけ埋まる。それ以外は判子が1つでもあれば埋まる
 export function listProgress(visits, spots, listKey) {
@@ -201,6 +225,19 @@ export function groupByDay(visits, seals) {
   for (const s of seals) day(s.at).seals.push(s);
   for (const d of days.values()) d.visits.sort((a, b) => a.at - b.at);
   return [...days.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+// visits の spotId を aliases（子 id → 親 id）で張り替える。張り替えた件数も返す（国宝を場所ごとにまとめたときの引っ越し用）
+export function remapVisits(visits, aliases) {
+  if (!aliases || !Object.keys(aliases).length) return { visits, changed: 0 };
+  let changed = 0;
+  const out = visits.map((v) => {
+    const to = aliases[v.spotId];
+    if (!to || to === v.spotId) return v;
+    changed++;
+    return { ...v, spotId: to };
+  });
+  return { visits: out, changed };
 }
 
 // その場所に今日（date の日）すでに判子があるか

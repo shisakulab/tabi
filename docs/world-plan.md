@@ -12,7 +12,7 @@
 
 ## 段階
 ### 段階1：世界遺産で世界を回れるようにする（最初の公開）
-- 地図：日本の中は国土地理院のまま、日本の外は世界対応の無料タイルに切り替える（候補と規約は要調査。OSM 本家のタイルはアプリでの多用が規約で禁止なので使わない）
+- 地図：日本の中は国土地理院のまま、日本の外は世界対応の無料タイルに切り替える（下の「日本の外の地図タイル」。推しは Protomaps の PMTiles を自分で置く）
 - データ：世界遺産の P17=日本 の絞りを外す。区画（0.5度）はそのまま使える。国は Wikidata の P17 で付ける
 - 名前：日本語 → 英語 → 現地語 の順で出す
 - 帳面：「国」のタブ（行った国の数と一覧）。都道府県のタブは残す
@@ -30,6 +30,21 @@
 
 ### 段階4（任意）：英語の画面
 - 人に勧める・海外の人にも使ってもらうなら。旅暦の名前と判子の世界観をどう訳すかが先
+
+## 日本の外の地図タイル（2026-10-13 調べ）
+| 候補 | 無料の条件 | オフライン（PWA のキャッシュ） | 出典表示 | 日本語の地名 |
+|---|---|---|---|---|
+| OSM 本家（tile.openstreetmap.org） | キー不要、多用はブロックされうる | **禁止**と明記 | © OpenStreetMap contributors | 規約に記載なし |
+| OpenFreeMap | 無料・無制限・キー不要 | 規約に明記なし（自前で建てることも可） | OSM | name:ja 対応（公式の明記は未確認） |
+| **Protomaps（PMTiles を自分で置く）** | 自分のファイルなので上限・キーなし。デザイン CC0、データ ODbL | **できる**（自分のファイル） | © OpenStreetMap（必須） | ローカライズで name:ja 対応 |
+| CARTO | キー必須、非商用は月500万タイル | 30日を超える保存・一括取得は**禁止** | CARTO と OSM | 未確認 |
+| Stadia（Stamen） | 非商用は登録だけで月20万タイル | 未確認 | Stadia/Stamen と OSM | 未確認 |
+| MapTiler | キー必須、無料枠に上限 | 明記なし | 必須 | 対応（明記） |
+| Esri | 無料アカウント、非商用は月100万タイル | 未確認 | Esri | 未確認 |
+
+推し：**Protomaps の PMTiles を GitHub Pages に置き、MapLibre で出す**。キー・回数・オフラインの制限がない。ただし今の地図は Leaflet＋ラスターなので、MapLibre（ベクター）に変えるか、protomaps-leaflet を使うかを決める必要がある。世界全体のファイルは大きい（GitHub Pages は1ファイル100MB・サイト1GBが目安）ので、ズームを絞るか地域ごとに切り出す。
+
+出典：https://operations.osmfoundation.org/policies/tiles/ ／ https://openfreemap.org/ ／ https://docs.protomaps.com/basemaps/downloads ／ https://docs.protomaps.com/basemaps/localization ／ https://carto.com/legal/basemap-terms/ ／ https://stadiamaps.com/faqs/ ／ https://www.maptiler.com/cloud/terms/ ／ https://doc.arcgis.com/en/data-appliance/2024/vector-basemaps/terms-use.htm
 
 ## 決めてほしいこと
 1. 画面の言葉は、当面日本語だけでよいか
