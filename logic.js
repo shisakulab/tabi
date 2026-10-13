@@ -114,7 +114,7 @@ export function normalizeName(s) {
 // ---------- 場所の種類と旅のしかた ----------
 // 場所は「一覧に入っている場所」（tier: 'list'。世界遺産・百選・季節の名所など）と「近所の場所」（tier: 'near'。OSM の温泉・銭湯・神社・お寺）の2つ
 // 灯台も OSM から取るが、遠くから目当てに行く場所なので tier は 'list'
-export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台' };
+export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台', museum: '博物館・記念館', sight: '名所', viewpoint: '展望', bakery: 'パン屋', cafe: '喫茶店' };
 export const MODES = {
   walk: { label: '徒歩', range: 2000 },
   bike: { label: '自転車', range: 10000 },
@@ -197,10 +197,12 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
     const r = walkLoopQuests(cands, pos, day, hash);
     if (r.spots.length) return r.spots.slice(0, limit).map((s) => ({ ...s, loop: r.meters }));
   }
-  return cands
-    .sort((a, b) => hash(day + a.id) - hash(day + b.id))
-    .slice(0, limit)
-    .sort((a, b) => a.distance - b.distance);
+  // 自転車：日付で混ぜた順に、まだ選んでいない種類を先に取る（同じ種類ばかりにしない）
+  const mixed = cands.sort((a, b) => hash(day + a.id) - hash(day + b.id));
+  const out = []; const kinds = new Set();
+  for (const s of mixed) { if (out.length >= limit) break; if (!kinds.has(s.kind)) { out.push(s); kinds.add(s.kind); } }
+  for (const s of mixed) { if (out.length >= limit) break; if (!out.includes(s)) out.push(s); }
+  return out.sort((a, b) => a.distance - b.distance);
 }
 
 // 徒歩の今日のお題は、今いる所から2〜3か所を回って戻ると、ちょうどいい運動量になる組み合わせにする。
@@ -209,6 +211,7 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
 export const WALK_TARGET_METERS = 4000;
 export const WALK_DETOUR = 1.25;
 export const STEP_METERS = 0.7;
+export const KIND_DUP_PENALTY = 600; // m 相当
 // 今いる所 → 場所を順に → 今いる所、の直線距離がいちばん短い回り方 { order, meters }（meters は道のりの見積もり）
 export function bestLoop(pos, spots) {
   const perm = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => perm([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
@@ -226,12 +229,17 @@ export function bestLoop(pos, spots) {
 export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METERS, pool = 24) {
   const list = [...cands].sort((a, b) => hash(day + a.id) - hash(day + b.id)).slice(0, pool);
   let best = null;
+  const kindCount = new Set(list.map((x) => x.kind)).size;
   for (const k of [3, 2]) {
     if (list.length < k) continue;
     const idx = Array.from({ length: k }, (_, i) => i);
     for (;;) {
-      const loop = bestLoop(pos, idx.map((i) => list[i]));
-      const score = Math.abs(loop.meters - target);
+      const picked = idx.map((i) => list[i]);
+      const loop = bestLoop(pos, picked);
+      // 同じ種類ばかり（神社とお寺だけ等）にならないよう、種類が重なるごとに減点する
+      // 候補に種類が足りず避けられない重なりは数えない（全部神社なら3か所とも神社でよい）
+      const dup = picked.length - new Set(picked.map((x) => x.kind)).size - Math.max(0, k - kindCount);
+      const score = Math.abs(loop.meters - target) + dup * KIND_DUP_PENALTY;
       if (!best || score < best.score) best = { score, loop };
       // 次の組み合わせ
       let i = k - 1;

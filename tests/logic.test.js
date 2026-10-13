@@ -239,3 +239,17 @@ test('徒歩の今日のお題：回って戻ると約4kmになる2〜3か所を
   assert.equal(b.length, 3);
   assert.ok(b.every((s) => s.loop === undefined));
 });
+
+test('今日のお題は種類が分かれるように選ぶ', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  const kinds = ['shrine', 'shrine', 'shrine', 'temple', 'temple', 'temple', 'sento', 'museum'];
+  const spots = Array.from({ length: 48 }, (_, i) => {
+    const r = 0.003 + 0.0003 * i; const a = i * 2.4;
+    return { id: `k${i}`, kind: kinds[i % kinds.length], tier: 'near', lat: pos.lat + r * Math.cos(a), lng: pos.lng + r * Math.sin(a) };
+  });
+  const none = new Set();
+  for (const mode of ['walk', 'bike']) {
+    const q = dailyQuests(spots, '2026-10-14', mode, pos, none, none);
+    assert.equal(new Set(q.map((s) => s.kind)).size, q.length, `${mode}: ${q.map((s) => s.kind)}`);
+  }
+});

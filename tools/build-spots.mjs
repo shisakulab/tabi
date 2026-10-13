@@ -82,7 +82,9 @@ async function overpass(query, name) {
   throw new Error(`${name}: 取得できませんでした`);
 }
 
-// 温泉か銭湯か神社かお寺か灯台か。どれでもなければ null
+// 温泉か銭湯か神社かお寺か灯台か博物館か名所か展望か パン屋か喫茶店か。どれでもなければ null
+// 喫茶店・パン屋から外すチェーン（名前に含むもの）
+const CHAIN_RE = /スターバックス|スタバ|Starbucks|ドトール|DOUTOR|タリーズ|Tully|コメダ|エクセルシオール|サンマルク|ベローチェ|VELOCE|星乃珈琲|上島珈琲|プロント|PRONTO|カフェ・ド・クリエ|珈琲館|ルノアール|高倉町珈琲|倉式珈琲|むさしの森珈琲|椿屋珈琲|コナズ珈琲|ブルーボトル|Blue Bottle|カフェ・ベローチェ|ミスタードーナツ|ミスド|マクドナルド|ケンタッキー|モスバーガー|ロッテリア|コーヒービーン|Coffee Bean|ゴンチャ|ポンパドウル|神戸屋|サンジェルマン|ヴィ・ド・フランス|ドンク|アンデルセン|リトルマーメイド|ベーカリーレストランサンマルク|デイリーヤマザキ|メゾンカイザー|PAUL|カスカード|R Baker|ブーランジェリーナカガワ|シャトレーゼ/;
 function nearKind(t) {
   if (t.man_made === 'lighthouse') return 'lighthouse';
   if (t.amenity === 'place_of_worship') return t.religion === 'shinto' ? 'shrine' : t.religion === 'buddhist' ? 'temple' : null;
@@ -91,6 +93,16 @@ function nearKind(t) {
     if (t['bath:type'] === 'foot_bath' || t.access === 'private' || t.access === 'no') return null;
     return t['bath:type'] === 'onsen' || /温泉/.test(t.name) ? 'onsen' : 'sento';
   }
+  if (t.tourism === 'museum') return 'museum';
+  // historic=memorial（小さな碑）は件数が多すぎるので外す
+  if (t.tourism === 'attraction' || ['castle', 'ruins', 'monument'].includes(t.historic)) return 'sight';
+  if (t.tourism === 'viewpoint') return 'viewpoint';
+  // チェーン店は除く（brand タグがないチェーンも多いので名前でも見る）
+  // 名前が支店名だけ（「日本橋店」「新宿東口店」）のものは、何の店か分からないので除く
+  const branchOnly = /^[一-鿿]{1,4}店$/.test(((t['name:ja'] || t.name) || '').trim());
+  const chain = t.brand || t['brand:wikidata'] || branchOnly || CHAIN_RE.test(t.name || '') || CHAIN_RE.test(t['name:ja'] || '');
+  if (t.shop === 'bakery') return chain ? null : 'bakery';
+  if (t.amenity === 'cafe') return chain ? null : 'cafe';
   return null;
 }
 
@@ -102,6 +114,11 @@ async function fetchNear(pref, i) {
     shinto: 'nwr["amenity"="place_of_worship"]["religion"="shinto"]["name"](area.a);',
     buddhist: 'nwr["amenity"="place_of_worship"]["religion"="buddhist"]["name"](area.a);',
     bath: 'nwr["amenity"="public_bath"]["name"](area.a); nwr["natural"="hot_spring"]["name"](area.a); nwr["man_made"="lighthouse"]["name"](area.a);',
+    museum: 'nwr["tourism"="museum"]["name"](area.a);',
+    sight: 'nwr["tourism"="attraction"]["name"](area.a); nwr["historic"~"^(castle|ruins|monument|memorial)$"]["name"](area.a);',
+    viewpoint: 'nwr["tourism"="viewpoint"]["name"](area.a);',
+    bakery: 'nwr["shop"="bakery"]["name"](area.a);',
+    cafe: 'nwr["amenity"="cafe"]["name"](area.a);',
   };
   const els = [];
   for (const [g, body] of Object.entries(groups)) {
