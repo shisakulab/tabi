@@ -329,19 +329,14 @@ function showCard(spot) {
   document.body.append(card);
 }
 
-// Google マップの URL（アプリがあればアプリで開く）。名前で探すと同名の別の場所に飛ぶことがあるので座標で渡す
+// Google マップの URL（アプリがあればアプリで開く）。
+// 開く：座標だけ渡すと名前のない「ピン」が開くので、名前でその場所のまわりを検索する（同じ名前の神社が多くても、近くのものが出る）
+// 経路：行き先は座標で渡す（名前だと同名の別の場所への経路になりうる）
 function gmapUrl(spot, route) {
   const ll = `${spot.lat},${spot.lng}`;
   return route
     ? `https://www.google.com/maps/dir/?api=1&destination=${ll}`
-    : `https://www.google.com/maps/search/?api=1&query=${ll}`;
-}
-
-// 場所の札：OSM の場所は種類（神社・銭湯・灯台など）、一覧の場所は入っている一覧の名前（季節の名所は別の札で出すので除く）
-const BIG_LISTS = ['heritage', 'judenken'];
-function spotTags(spot) {
-  if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
-  return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
+    : `https://www.google.com/maps/search/${encodeURIComponent(spot.name)}/@${ll},17z`;
 }
 
 function setPosDot(pos) {
