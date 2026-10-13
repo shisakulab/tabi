@@ -62,7 +62,8 @@ export async function exportAll() {
   const [visits, seals, meals, photos] = await Promise.all(['visits', 'seals', 'meals', 'photos'].map(getAll));
   const photoData = [];
   for (const p of photos) photoData.push({ id: p.id, data: await blobToDataURL(p.blob) });
-  return { app: 'tabigoyomi', version: 1, exportedAt: new Date().toISOString(), visits, seals, meals, photos: photoData };
+  const dist = await getSetting('dist', {});
+  return { app: 'tabigoyomi', version: 1, exportedAt: new Date().toISOString(), visits, seals, meals, photos: photoData, dist };
 }
 
 // 同じ id は上書き、それ以外は残す
@@ -73,6 +74,16 @@ export async function importAll(json) {
   for (const v of json.visits) await put('visits', v);
   for (const s of json.seals) await put('seals', s);
   for (const m of json.meals || []) await put('meals', m);
+  // 日ごとの移動距離：同じ日は長い方を残す
+  if (json.dist && typeof json.dist === 'object') {
+    const cur = (await getSetting('dist', {})) || {};
+    for (const [day, rec] of Object.entries(json.dist)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !rec || typeof rec !== 'object') continue;
+      const c = cur[day] || (cur[day] = {});
+      for (const k of ['walk', 'bike', 'trip']) if (Number.isFinite(rec[k])) c[k] = Math.max(c[k] || 0, rec[k]);
+    }
+    await setSetting('dist', cur);
+  }
   for (const p of json.photos || []) {
     // 画像の data URL だけを受け付ける（それ以外の URL を読みに行かない）
     if (typeof p.data !== 'string' || !/^data:image\/(jpeg|png|webp|gif);base64,/.test(p.data)) continue;

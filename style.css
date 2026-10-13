@@ -223,8 +223,9 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .masu.nocoord { border-style: dotted; opacity: .6; }
 .masu.season.got { background: var(--seal); border-color: var(--seal); }
 .spotlist { margin-top: 8px; display: grid; gap: 4px; font-size: 14px; }
-.spotlist .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.spotlist .row, .spotlist button.row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .spotlist .row.got { font-weight: 700; }
+.spotlist button.row { width: 100%; background: none; border-left: none; border-right: none; border-top: none; font: inherit; color: inherit; text-align: left; }
 .prefgroups { display: grid; }
 .prefgroup { border-bottom: 1px solid var(--line); }
 .prefgroup > summary { list-style: none; display: flex; gap: 8px; align-items: center; min-height: 40px; cursor: pointer; font-size: 15px; }

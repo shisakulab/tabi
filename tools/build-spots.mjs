@@ -82,9 +82,13 @@ async function overpass(query, name) {
   throw new Error(`${name}: 取得できませんでした`);
 }
 
-// 温泉か銭湯か神社かお寺か灯台か博物館か名所か展望か パン屋か喫茶店か。どれでもなければ null
+// 温泉か銭湯か神社かお寺か灯台か博物館か名所か展望か パン屋か喫茶店か定食屋か。どれでもなければ null
 // 喫茶店・パン屋から外すチェーン（名前に含むもの）
 const CHAIN_RE = /スターバックス|スタバ|Starbucks|ドトール|DOUTOR|タリーズ|Tully|コメダ|エクセルシオール|サンマルク|ベローチェ|VELOCE|星乃珈琲|上島珈琲|プロント|PRONTO|カフェ・ド・クリエ|珈琲館|ルノアール|高倉町珈琲|倉式珈琲|むさしの森珈琲|椿屋珈琲|コナズ珈琲|ブルーボトル|Blue Bottle|カフェ・ベローチェ|ミスタードーナツ|ミスド|マクドナルド|ケンタッキー|モスバーガー|ロッテリア|コーヒービーン|Coffee Bean|ゴンチャ|ポンパドウル|神戸屋|サンジェルマン|ヴィ・ド・フランス|ドンク|アンデルセン|リトルマーメイド|ベーカリーレストランサンマルク|デイリーヤマザキ|メゾンカイザー|PAUL|カスカード|R Baker|ブーランジェリーナカガワ|シャトレーゼ/;
+// 定食屋らしい名前（「食事処」のような名乗り）とジャンル、外すチェーン、社員食堂・学食など
+const TEISHOKU_NAME_RE = /定食|食堂|めし処|飯処|めしや|ごはん処|御飯処|ご飯処|お食事処|御食事処|食事処/;
+const TEISHOKU_CHAIN_RE = /大戸屋|やよい軒|街かど屋|宮本むなし|まいどおおきに|めしや丼|ザめしや|すき家|吉野家|松屋|なか卯|かつや|ガスト|ジョイフル|ココス|サイゼリヤ|デニーズ|藍屋|夢庵|しんぱち食堂|定食酒場食堂|大阪王将|餃子の王将/;
+const TEISHOKU_CAFETERIA_RE = /社員|学生|職員|学食|生協/;
 function nearKind(t) {
   if (t.man_made === 'lighthouse') return 'lighthouse';
   if (t.amenity === 'place_of_worship') return t.religion === 'shinto' ? 'shrine' : t.religion === 'buddhist' ? 'temple' : null;
@@ -97,9 +101,19 @@ function nearKind(t) {
   // historic=memorial（小さな碑）は件数が多すぎるので外す
   if (t.tourism === 'attraction' || ['castle', 'ruins', 'monument'].includes(t.historic)) return 'sight';
   if (t.tourism === 'viewpoint') return 'viewpoint';
-  // チェーン店は除く（brand タグがないチェーンも多いので名前でも見る）
-  // 名前が支店名だけ（「日本橋店」「新宿東口店」）のものは、何の店か分からないので除く
+  // 名前が支店名だけ（「日本橋店」「新宿東口店」）のものは、何の店か分からないので除く（パン屋・喫茶店・定食屋で使う）
   const branchOnly = /^[一-鿿]{1,4}店$/.test(((t['name:ja'] || t.name) || '').trim());
+  if (t.amenity === 'restaurant' || t.amenity === 'fast_food') {
+    const name = (t['name:ja'] || t.name || '').trim();
+    if (!name || branchOnly) return null;
+    const looksTeishoku = TEISHOKU_NAME_RE.test(name) || /teishoku|set_meal/i.test(t.cuisine || '');
+    if (!looksTeishoku) return null;
+    if (t.brand || t['brand:wikidata']) return null;
+    if (TEISHOKU_CHAIN_RE.test(name) || TEISHOKU_CAFETERIA_RE.test(name)) return null;
+    if (t.access === 'private' || t.access === 'no') return null;
+    return 'teishoku';
+  }
+  // チェーン店は除く（brand タグがないチェーンも多いので名前でも見る）
   const chain = t.brand || t['brand:wikidata'] || branchOnly || CHAIN_RE.test(t.name || '') || CHAIN_RE.test(t['name:ja'] || '');
   if (t.shop === 'bakery') return chain ? null : 'bakery';
   if (t.amenity === 'cafe') return chain ? null : 'cafe';
@@ -119,6 +133,7 @@ async function fetchNear(pref, i) {
     viewpoint: 'nwr["tourism"="viewpoint"]["name"](area.a);',
     bakery: 'nwr["shop"="bakery"]["name"](area.a);',
     cafe: 'nwr["amenity"="cafe"]["name"](area.a);',
+    restaurant: 'nwr["amenity"="restaurant"]["name"](area.a); nwr["amenity"="fast_food"]["name"](area.a);',
   };
   const els = [];
   for (const [g, body] of Object.entries(groups)) {

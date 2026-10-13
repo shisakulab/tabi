@@ -1,7 +1,8 @@
-"""Geofabrik の日本の OSM ファイル（.osm.pbf）から、近所の場所（温泉・銭湯・神社・お寺・灯台・博物館・名所・展望・パン屋・喫茶店）を
-都道府県ごとに抜き出す。Overpass が混んで取れないときの代わり。出力は Overpass と同じ形で
-tools/.cache/osm-JP-XX-{shinto,buddhist,bath,museum,sight,viewpoint,bakery,cafe}.json に書くので、
-そのあと node tools/build-spots.mjs を走らせればキャッシュとして使われる。
+"""Geofabrik の日本の OSM ファイル（.osm.pbf）から、近所の場所（温泉・銭湯・神社・お寺・灯台・博物館・名所・展望・パン屋・喫茶店・
+定食屋）を都道府県ごとに抜き出す。Overpass が混んで取れないときの代わり。出力は Overpass と同じ形で
+tools/.cache/osm-JP-XX-{shinto,buddhist,bath,museum,sight,viewpoint,bakery,cafe,restaurant}.json に書くので、
+そのあと node tools/build-spots.mjs を走らせればキャッシュとして使われる。定食屋かどうかの絞り込み（チェーン除外など）は
+restaurant グループを広めに拾っておいて build-spots.mjs の nearKind() 側でする。
 
 使い方:
   python tools/osm-extract.py part <japan.geojson> <地方.osm.pbf> <名前>   … tools/.cache/osm-part-<名前>.json に書く
@@ -24,8 +25,8 @@ from shapely.strtree import STRtree
 
 CACHE = pathlib.Path(__file__).parent / ".cache"
 KEEP = ("name", "name:ja", "amenity", "religion", "natural", "man_made", "bath:type", "access",
-        "tourism", "historic", "shop", "brand", "brand:wikidata")
-GROUPS = ("shinto", "buddhist", "bath", "museum", "sight", "viewpoint", "bakery", "cafe")
+        "tourism", "historic", "shop", "brand", "brand:wikidata", "cuisine")
+GROUPS = ("shinto", "buddhist", "bath", "museum", "sight", "viewpoint", "bakery", "cafe", "restaurant")
 
 
 def load_prefs(geojson):
@@ -52,6 +53,8 @@ def group_of(t):
         return "bakery"
     if t.get("amenity") == "cafe":
         return "cafe"
+    if t.get("amenity") in ("restaurant", "fast_food"):
+        return "restaurant"
     return None
 
 

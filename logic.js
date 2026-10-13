@@ -114,17 +114,18 @@ export function normalizeName(s) {
 // ---------- 場所の種類と旅のしかた ----------
 // 場所は「一覧に入っている場所」（tier: 'list'。世界遺産・百選・季節の名所など）と「近所の場所」（tier: 'near'。OSM の温泉・銭湯・神社・お寺）の2つ
 // 灯台も OSM から取るが、遠くから目当てに行く場所なので tier は 'list'
-export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台', museum: '博物館・記念館', sight: '名所', viewpoint: '展望', bakery: 'パン屋', cafe: '喫茶店' };
+export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台', museum: '博物館・記念館', sight: '名所', viewpoint: '展望', bakery: 'パン屋', cafe: '喫茶店', teishoku: '定食屋' };
+// 旅のしかたは3つ（2026-10-14 に 徒歩・自転車・車・電車・飛行機 から分け直した）
 export const MODES = {
-  walk: { label: '徒歩', range: 2000 },
-  bike: { label: '自転車', range: 10000 },
-  car: { label: '車', range: 100000 },
-  train: { label: '電車', range: 200000 }, // 新幹線・特急で日帰りできるくらい。車（100km）より遠くまで行ける
-  plane: { label: '飛行機', range: 3000000, note: '全国' }, // 日本の端から端まで届く距離
+  walk: { label: '散歩', range: 2000 },
+  bike: { label: 'サイクリング', range: 10000 },
+  trip: { label: '旅行', range: 3000000, note: '全国' }, // 日本の端から端まで届く距離
 };
-const FAR_MODES = ['train', 'car', 'plane'];
+// 前の版で保存した旅のしかた（車・電車・飛行機）は旅行にする
+export function normalizeMode(mode) { return MODES[mode] ? mode : ['car', 'train', 'plane'].includes(mode) ? 'trip' : 'walk'; }
+const FAR_MODES = ['trip', 'train', 'car', 'plane'];
 
-// 旅のしかたで出す場所か。徒歩・自転車はすべて。電車・車・飛行機は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
+// 旅のしかたで出す場所か。散歩・サイクリングはすべて。旅行は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
 export function modeAllows(spot, mode) {
   if (FAR_MODES.includes(mode)) return spot.tier !== 'near';
   return true;
@@ -132,7 +133,7 @@ export function modeAllows(spot, mode) {
 
 // 旅のしかたで範囲と種類を絞る。位置があれば range 以内だけを、近い順に distance 付きで返す。位置がなければ種類だけで絞る
 export function spotsForMode(spots, mode, pos) {
-  const range = (MODES[mode] || MODES.walk).range;
+  const range = (MODES[normalizeMode(mode)]).range;
   const list = spots.filter((s) => modeAllows(s, mode) && Number.isFinite(s.lat) && Number.isFinite(s.lng));
   if (!pos) return list.map((s) => ({ ...s, distance: null }));
   return list.map((s) => ({ ...s, distance: distanceMeters(pos, s) }))
@@ -167,7 +168,7 @@ export function monthlyQuests(spots, date, mode, pos, limit = 5) {
     const k = (day + m) % list.length;
     return [...list.slice(k), ...list.slice(0, k)].slice(0, limit).map((s) => ({ ...s, distance: null }));
   }
-  const range = (MODES[mode] || MODES.walk).range;
+  const range = (MODES[normalizeMode(mode)]).range;
   const withD = inSeason.map((s) => ({ ...s, distance: distanceMeters(pos, s) })).sort((a, b) => a.distance - b.distance);
   // 範囲の外は出さない（自転車なのに 100km 先の名所がお題に出ていた）
   return withD.filter((s) => s.distance <= range && modeAllows(s, mode)).slice(0, limit);
@@ -192,26 +193,43 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
     })
     .map((s) => ({ ...s, distance: distanceMeters(pos, s), daily: true }))
     .filter((s) => s.distance <= range);
-  // 徒歩：回って戻るとちょうどいい運動量になる 2〜3か所を、回る順に。loop は道のりの見積もり（m）
-  if (mode === 'walk' && limit >= 2) {
-    const r = walkLoopQuests(cands, pos, day, hash);
+  // 散歩・サイクリング：回って戻るとちょうどいい運動量になる 2〜3か所を、回る順に。loop は道のりの見積もり（m）
+  if (LOOP_TARGET[mode] && limit >= 2) {
+    const r = walkLoopQuests(cands, pos, day, hash, LOOP_TARGET[mode]);
     if (r.spots.length) return r.spots.slice(0, limit).map((s) => ({ ...s, loop: r.meters }));
   }
-  // 自転車：日付で混ぜた順に、まだ選んでいない種類を先に取る（同じ種類ばかりにしない）
+  // 自転車：日付で混ぜた順に、まだ選んでいない分類（ご飯・寺社・その他）→ 種類 を先に取る
   const mixed = cands.sort((a, b) => hash(day + a.id) - hash(day + b.id));
-  const out = []; const kinds = new Set();
-  for (const s of mixed) { if (out.length >= limit) break; if (!kinds.has(s.kind)) { out.push(s); kinds.add(s.kind); } }
+  const out = []; const cats = new Set(); const kinds = new Set();
+  for (const s of mixed) { if (out.length >= limit) break; if (!cats.has(questCategory(s))) { out.push(s); cats.add(questCategory(s)); kinds.add(s.kind); } }
+  for (const s of mixed) { if (out.length >= limit) break; if (!out.includes(s) && !kinds.has(s.kind)) { out.push(s); kinds.add(s.kind); } }
   for (const s of mixed) { if (out.length >= limit) break; if (!out.includes(s)) out.push(s); }
   return out.sort((a, b) => a.distance - b.distance);
 }
 
-// 徒歩の今日のお題は、今いる所から2〜3か所を回って戻ると、ちょうどいい運動量になる組み合わせにする。
-// 目安：厚生労働省「健康づくりのための身体活動・運動ガイド2023」の成人 1日8,000歩。普段の生活の歩数もあるので、散歩は約4km（約5,700歩）を狙う。
+// 今日のお題（散歩・サイクリング）は、毎日続けるトレーニングとして、今いる所から2〜3か所を回って戻ると約30分になる組み合わせにする。
+// 根拠：厚生労働省「健康づくりのための身体活動・運動ガイド2023」。成人は身体活動を1日60分以上（約8,000歩、通勤・家事を含む）、
+// 加えて息が弾み汗をかく程度の運動を週60分以上。20〜64歳の平均歩数は男性8,564歩・女性7,287歩（令和6年国民健康・栄養調査）で、
+// 身体活動は普段の生活で目安に近い人が多い。足りないのは運動のほうなので、少し速めの散歩（やや速歩 4.3メッツ）か
+// ゆっくりのサイクリング（16km/h 未満 4.0メッツ）を毎日30分。最短の持続時間はない（ガイドの Q&A）ので、30分を上限の目安にする。
 // 道は直線より長いので、直線距離に WALK_DETOUR を掛けて見積もる
-export const WALK_TARGET_METERS = 4000;
+export const LOOP_MINUTES = 30;
+export const LOOP_SPEED_KMH = { walk: 5, bike: 15 };
+export const WALK_TARGET_METERS = LOOP_SPEED_KMH.walk * 1000 * LOOP_MINUTES / 60; // 2,500m
+export const BIKE_TARGET_METERS = LOOP_SPEED_KMH.bike * 1000 * LOOP_MINUTES / 60; // 7,500m
+export const LOOP_TARGET = { walk: WALK_TARGET_METERS, bike: BIKE_TARGET_METERS };
 export const WALK_DETOUR = 1.25;
 export const STEP_METERS = 0.7;
 export const KIND_DUP_PENALTY = 600; // m 相当
+export const CATEGORY_DUP_PENALTY = 2500; // m 相当。分類が重なるのは、道のりが多少ずれるより避けたい
+// 今日のお題は「ご飯」「寺社」「その他」から1つずつ出す
+const FOOD_KINDS = ['cafe', 'bakery', 'teishoku'];
+const SACRED_KINDS = ['shrine', 'temple'];
+export function questCategory(spot) {
+  if (FOOD_KINDS.includes(spot.kind)) return 'food';
+  if (SACRED_KINDS.includes(spot.kind)) return 'sacred';
+  return 'other';
+}
 // 今いる所 → 場所を順に → 今いる所、の直線距離がいちばん短い回り方 { order, meters }（meters は道のりの見積もり）
 export function bestLoop(pos, spots) {
   const perm = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => perm([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
@@ -224,12 +242,21 @@ export function bestLoop(pos, spots) {
   }
   return best ? { order: best.order, meters: Math.round(best.straight * WALK_DETOUR) } : { order: [], meters: 0 };
 }
-// 候補から、回る道のりが target にいちばん近い 3か所（なければ 2か所）を選ぶ。同じくらいなら日付で決まる順。
+// 候補から、ご飯・寺社・その他が1つずつで、回る道のりが target にいちばん近い 3か所（なければ 2か所）を選ぶ。同じくらいなら日付で決まる順。
 // 候補は日付で混ぜた先頭 pool 件に絞る（組み合わせが多すぎないように）
 export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METERS, pool = 24) {
-  const list = [...cands].sort((a, b) => hash(day + a.id) - hash(day + b.id)).slice(0, pool);
+  // 分類ごとに日付で混ぜた先頭から同じ数ずつ取る（喫茶店ばかりの都心でも、寺社やその他が候補に残るように）
+  // 行って戻るだけで道のりを超える遠い場所は候補にしない（範囲いっぱいから取ると、遠い場所どうしの組み合わせしか残らなかった）
+  const reach = (target / (2 * WALK_DETOUR)) * 1.1;
+  const nearCands = cands.filter((x) => x.distance <= reach);
+  const mixed = [...(nearCands.length >= 3 ? nearCands : cands)].sort((a, b) => hash(day + a.id) - hash(day + b.id));
+  const per = Math.ceil(pool / 3);
+  const list = ['food', 'sacred', 'other'].flatMap((c) => mixed.filter((x) => questCategory(x) === c).slice(0, per));
+  // 分類が足りない場所（神社しかない等）では、残りを混ぜた順で足して pool 件にする
+  for (const x of mixed) { if (list.length >= pool) break; if (!list.includes(x)) list.push(x); }
   let best = null;
   const kindCount = new Set(list.map((x) => x.kind)).size;
+  const catCount = new Set(list.map(questCategory)).size;
   for (const k of [3, 2]) {
     if (list.length < k) continue;
     const idx = Array.from({ length: k }, (_, i) => i);
@@ -239,7 +266,8 @@ export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METER
       // 同じ種類ばかり（神社とお寺だけ等）にならないよう、種類が重なるごとに減点する
       // 候補に種類が足りず避けられない重なりは数えない（全部神社なら3か所とも神社でよい）
       const dup = picked.length - new Set(picked.map((x) => x.kind)).size - Math.max(0, k - kindCount);
-      const score = Math.abs(loop.meters - target) + dup * KIND_DUP_PENALTY;
+      const catDup = picked.length - new Set(picked.map(questCategory)).size - Math.max(0, k - catCount);
+      const score = Math.abs(loop.meters - target) + dup * KIND_DUP_PENALTY + catDup * CATEGORY_DUP_PENALTY;
       if (!best || score < best.score) best = { score, loop };
       // 次の組み合わせ
       let i = k - 1;
@@ -252,6 +280,24 @@ export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METER
   }
   if (!best) return { spots: [], meters: 0 };
   return { spots: best.loop.order, meters: best.loop.meters };
+}
+
+// ---------- ご当地グルメ ----------
+// 品名から図鑑（foods：{ key, name, pref, summary, ... }）の項目を当てる。表記ゆれ（ひらがな/カタカナ、「鍋」「汁」の有無）程度を吸収する。当たらなければ null
+const bareFoodName = (s) => normalizeName(s).replace(/(鍋|汁)$/, '');
+export function classifyFood(name, foods) {
+  const t = bareFoodName(name);
+  if (!t || !Array.isArray(foods)) return null;
+  let best = null;
+  let bestLen = 0;
+  for (const f of foods) {
+    for (const w of [f.name, f.kana, ...(f.aliases || [])]) {
+      if (!w) continue;
+      const n = bareFoodName(w);
+      if (n && t.includes(n) && n.length > bestLen) { best = f.key; bestLen = n.length; }
+    }
+  }
+  return best;
 }
 
 // ---------- 一覧 ----------
@@ -292,14 +338,31 @@ export function prefsVisited(visits, seals, meals, spots) {
 }
 
 // ---------- 日記・書き出し ----------
-// 日付ごとにまとめて新しい日から。visits は at（ミリ秒）、seals は at（'YYYY-MM-DD'）の日
-export function groupByDay(visits, seals) {
+// 日付ごとにまとめて新しい日から。visits は at（ミリ秒）、seals・meals は at（'YYYY-MM-DD'）の日
+export function groupByDay(visits, seals, meals = []) {
   const days = new Map();
-  const day = (d) => { if (!days.has(d)) days.set(d, { date: d, visits: [], seals: [] }); return days.get(d); };
+  const day = (d) => { if (!days.has(d)) days.set(d, { date: d, visits: [], seals: [], meals: [] }); return days.get(d); };
   for (const v of visits) day(todayStr(new Date(v.at))).visits.push(v);
   for (const s of seals) day(s.at).seals.push(s);
+  for (const m of meals) day(m.at).meals.push(m);
   for (const d of days.values()) d.visits.sort((a, b) => a.at - b.at);
   return [...days.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+// 歩いた・走った距離を積む。fix：{ lat, lng, acc, at }、track：{ last, meters }。新しい track を返す（元は変えない）
+// 精度の悪い位置（40m 超）は使わない。精度より小さい・15m 未満の動きは揺れとみなして数えない。
+// 10分以上あいたときと、時速90km を超える動き（位置の飛び）は、つながずにそこから数え直す
+export const TRACK_MAX_ACC = 40;
+export function addTrack(track, fix) {
+  const t = { last: track.last || null, meters: track.meters || 0 };
+  if (!fix || !Number.isFinite(fix.lat) || !(fix.acc <= TRACK_MAX_ACC)) return t;
+  if (!t.last) return { ...t, last: fix };
+  const d = distanceMeters(t.last, fix);
+  const dt = (fix.at - t.last.at) / 1000;
+  if (dt > 600 || dt <= 0) return { ...t, last: fix };
+  if (d < Math.max(15, fix.acc)) return t;
+  if (d / dt > 25) return { ...t, last: fix };
+  return { last: fix, meters: t.meters + d };
 }
 
 // visits の spotId を aliases（子 id → 親 id）で張り替える。張り替えた件数も返す（国宝を場所ごとにまとめたときの引っ越し用）

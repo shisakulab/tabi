@@ -46,7 +46,13 @@
 
 出典：https://operations.osmfoundation.org/policies/tiles/ ／ https://openfreemap.org/ ／ https://docs.protomaps.com/basemaps/downloads ／ https://docs.protomaps.com/basemaps/localization ／ https://carto.com/legal/basemap-terms/ ／ https://stadiamaps.com/faqs/ ／ https://www.maptiler.com/cloud/terms/ ／ https://doc.arcgis.com/en/data-appliance/2024/vector-basemaps/terms-use.htm
 
-## 決めてほしいこと
+## 決まったこと（2026-10-14）
+- 画面は当面日本語だけ
+- 海外の「近所の場所」には教会・モスクなども入れる（段階3で。数が多いので出し方はそのとき決める）
+- 最初の公開は段階1だけ
+- 地図は Protomaps（PMTiles）を軸に、Leaflet のまま protomaps-leaflet で出す案から始める。注意：世界全体の PMTiles は大きく（全ズームで100GB 超）GitHub Pages（サイト1GB が目安）に置けないので、日本の外は低いズームだけ自前に置くか、寄ったときは別のタイル（OpenFreeMap など）を使うかを、作り始めに試して決める
+
+## 決めてほしいこと（済み）
 1. 画面の言葉は、当面日本語だけでよいか
 2. 海外の「近所の場所」に教会・モスクなどを入れるか（入れると数がとても多い）
 3. 最初の公開は段階1だけでよいか

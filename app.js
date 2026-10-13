@@ -3,8 +3,8 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits,
-  MODES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood,
+  MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
@@ -13,8 +13,9 @@ const WD_ATTR = '<a href="https://www.wikidata.org/" target="_blank" rel="noopen
 const TOKYO = { lat: 35.681236, lng: 139.767125 };
 const TIER_COLOR = { list: '#2b4c7e', near: '#7a8f5b' };
 const SEAL_COLOR = '#b8423a';
+const FOOD_COLOR = '#b5752e';
 const OFF_COLOR = '#8a9699'; // 見頃でない季節の名所
-const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で', plane: '飛行機で' };
+const MODE_VERB = { walk: '歩いて', bike: '自転車で', trip: '旅行で', train: '電車で', car: '車で', plane: '飛行機で' };
 const SEAL_TYPES = [MEMO_TYPE, '御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
 const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない。都心は数が多く、引くと地図が埋まる
@@ -24,7 +25,7 @@ const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); co
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
 const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate');
 
-const state = { visits: [], seals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], tab: 'spots', fixes: [] };
+const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], foods: [], tab: 'spots', fixes: [] };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 動作確認用：?date=2026-11-12 で今日の日付を差し替える
@@ -128,13 +129,16 @@ async function resizePhoto(file) {
 
 // ---------- データ ----------
 async function loadData() {
-  [state.visits, state.seals] = await Promise.all([db.getAll('visits'), db.getAll('seals')]);
+  [state.visits, state.seals, state.meals] = await Promise.all([db.getAll('visits'), db.getAll('seals'), db.getAll('meals')]);
 }
 const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
 
-// 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）を地点にする
+// 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta] = await Promise.all([fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {})]);
+  const [lists, coords, meta, foods] = await Promise.all([
+    fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
+  ]);
+  state.foods = foods;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note }));
   for (const l of lists.lists) {
@@ -443,6 +447,32 @@ function setPosDot(pos) {
 
 // ---------- 判子を押す ----------
 let stamping = false;
+// ---------- 効果音 ----------
+// 音のファイルは持たず、Web Audio でその場で作る。iPhone はマナーモードだと鳴らないことがある
+let audioCtx = null;
+function sfx(kind) {
+  if (!setting('sound')) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const tone = (freq, start, dur, vol, type = 'sine', endFreq = freq) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t + start); o.frequency.exponentialRampToValueAtTime(endFreq, t + start + dur);
+      g.gain.setValueAtTime(0.0001, t + start); g.gain.exponentialRampToValueAtTime(vol, t + start + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + start + dur);
+      o.connect(g).connect(audioCtx.destination); o.start(t + start); o.stop(t + start + dur + 0.02);
+    };
+    if (kind === 'tap') tone(1400, 0, 0.04, 0.05, 'triangle', 900); // コッ
+    else if (kind === 'stamp') { tone(180, 0, 0.18, 0.5, 'sine', 70); tone(900, 0, 0.05, 0.12, 'triangle', 400); } // ポン（木の判子）
+    else if (kind === 'chime') { tone(1318, 0, 0.5, 0.12); tone(1760, 0.09, 0.6, 0.1); } // チリン
+  } catch { /* 音を出せない端末では何もしない */ }
+}
+// ボタンを押したら小さく鳴らす（判子・お題の達成は別の音）
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button, .chip, .tab, label.btn');
+  if (b && !b.dataset.sfx) sfx('tap');
+}, true);
+
 async function stamp(spot) {
   if (stamping) return;
   if (stampedOn(state.visits, spot.id, now())) { toast('この場所の判子は今日もう押してあります'); return; }
@@ -460,8 +490,11 @@ async function stamp(spot) {
     const season = seasonOf(spot, now());
     const visit = { id: db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'tap' };
     await db.put('visits', visit);
+    const wasQuest = currentQuests().some((q) => q.id === spot.id);
     await loadData();
     closeCard();
+    sfx('stamp');
+    if (wasQuest) setTimeout(() => sfx('chime'), 350);
     await celebrate(spot);
     render();
     openStamped(spot, season);
@@ -507,7 +540,7 @@ function drawModes() {
 }
 
 // ---------- 今月のお題 ----------
-// 見頃の名所（月のお題）に、徒歩・自転車なら近所の「今日のお題」を足して最大5件
+// 見頃の名所（月のお題）に、散歩・サイクリングなら近所の「今日のお題」を足して最大5件
 const QUEST_MAX = 5;
 const sameDay = (v, d) => new Date(v.at).toDateString() === d.toDateString();
 function currentQuests() {
@@ -532,12 +565,12 @@ function currentQuests() {
   const skip = new Set([...used, ...keepItems.map((it) => it.id)]);
   const need = want - keepItems.length;
   const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id)), d, state.mode, state.pos, today, before, need) : [];
-  // 徒歩は回る順（選んだときの順）のまま、自転車は近い順
+  // 回る順（選んだときの順）のまま
   let daily = [...kept, ...add];
   let loop = saved.loop || 0;
   if (add.length || keepItems.length !== saved.items.length) {
     let items = [...keepItems, ...add.map((s) => ({ id: s.id, lat: s.lat, lng: s.lng }))];
-    if (state.mode === 'walk' && items.length) {
+    if (LOOP_TARGET[state.mode] && items.length) {
       const r = bestLoop(state.pos, items);
       items = r.order; loop = r.meters;
     }
@@ -548,12 +581,11 @@ function currentQuests() {
     const rank = new Map(saved.items.map((it, i) => [it.id, i]));
     daily.sort((a, b) => rank.get(a.id) - rank.get(b.id));
   }
-  if (state.mode !== 'walk') daily.sort((a, b) => a.distance - b.distance);
-  state.dailyLoop = state.mode === 'walk' && daily.length ? loop : 0;
+  state.dailyLoop = LOOP_TARGET[state.mode] && daily.length ? loop : 0;
   return [...monthly, ...daily];
 }
-// 散歩の道のりを「約4.1km・約5,900歩・約60分」に（時速4km）
-const loopText = (m) => `約${(m / 1000).toFixed(1)}km・約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩・約${Math.round(m / 4000 * 60 / 5) * 5}分`;
+// 回る道のりを「約2.5km・約3,600歩・約30分」に（散歩は時速5km、サイクリングは時速15km で歩数なし）
+const loopText = (m, mode = state.mode) => [`約${(m / 1000).toFixed(1)}km`, mode === 'walk' ? `約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩` : null, `約${Math.round(m / (LOOP_SPEED_KMH[mode] * 1000) * 60 / 5) * 5}分`].filter(Boolean).join('・');
 function questDone(spot) {
   const d = now();
   if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
@@ -585,8 +617,8 @@ function openQuests() {
   const qs = currentQuests();
   showSheet(openQuests, [
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, `${now().getMonth() + 1}月のお題`),
-    h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '徒歩・自転車では、近くのまだ行っていない場所から「今日のお題」も毎日選びます。' : ''}`),
-    state.dailyLoop ? h('p', { class: 'sub' }, `今日の散歩：上から順に回って戻ると ${loopText(state.dailyLoop)}（道は直線の1.25倍で見積もり）。1日8,000歩（厚生労働省のガイドの目安）のうち、普段の歩数を引いたくらいの量です。`) : null,
+    h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '散歩・サイクリングでは、近くのまだ行っていない場所から「今日のお題」も毎日選びます（ご飯・寺社・その他から1つずつ）。' : ''}`),
+    state.dailyLoop ? h('p', { class: 'sub' }, `今日の${state.mode === 'walk' ? '散歩' : 'サイクリング'}：上から順に回って戻ると ${loopText(state.dailyLoop)}（${state.mode === 'walk' ? '少し速めに歩いて時速5km' : 'ゆっくり時速15km'}、道は直線の1.25倍で見積もり）。毎日続ける運動として約30分にしています。厚生労働省のガイドでは、普段の生活の動き（1日60分・約8,000歩）に加えて、息が弾む程度の運動を週60分以上が目安です。`) : null,
     h('ul', { class: 'list' }, qs.map((s) => h('li', {},
       h('button', { class: 'rec nophoto', type: 'button', onclick: () => { closeSheet(); focusSpot(s); } },
         h('div', {},
@@ -623,11 +655,44 @@ function pushFix(speed) {
   state.fixes.push({ lat: state.pos.lat, lng: state.pos.lng, acc: state.acc, at: t, speed: Number.isFinite(speed) ? speed : null });
   state.fixes = state.fixes.filter((f) => t - f.at <= 5 * 60000);
 }
+// 日ごとの移動距離 { 'YYYY-MM-DD': { walk, bike, trip } }（m）。アプリを開いている間の位置から積む
+const dist = { days: {}, track: {}, dirty: false };
+async function loadDist() { dist.days = (await db.getSetting('dist', {})) || {}; }
+function trackFix(fix) {
+  const mode = state.mode;
+  const before = dist.track[mode] || {};
+  const next = addTrack(before, fix);
+  // 旅のしかたを変えたら、ほかの旅のしかたの続きは切る
+  for (const k of Object.keys(dist.track)) if (k !== mode) dist.track[k] = {};
+  dist.track[mode] = next;
+  const add = next.meters - (before.meters || 0);
+  if (add > 0) {
+    const day = todayStr(now());
+    const rec = dist.days[day] || (dist.days[day] = {});
+    rec[mode] = Math.round((rec[mode] || 0) + add);
+    dist.dirty = true;
+  }
+}
+async function saveDist() { if (!dist.dirty) return; dist.dirty = false; try { await db.setSetting('dist', dist.days); } catch { dist.dirty = true; } }
+setInterval(saveDist, 30000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDist(); });
+// 日記の1日の距離：「散歩 2.4km（約3,400歩）・サイクリング 7.1km」
+function distText(rec) {
+  if (!rec) return '';
+  const km = (m) => `${(m / 1000).toFixed(1)}km`;
+  return [
+    rec.walk >= 50 ? `散歩 ${km(rec.walk)}（約${(Math.round(rec.walk / STEP_METERS / 100) * 100).toLocaleString()}歩）` : null,
+    rec.bike >= 50 ? `サイクリング ${km(rec.bike)}` : null,
+    rec.trip >= 50 ? `旅行の移動 ${km(rec.trip)}` : null,
+  ].filter(Boolean).join('・');
+}
+
 function onWatch(p) {
   state.pos = { lat: p.coords.latitude, lng: p.coords.longitude };
   state.acc = p.coords.accuracy;
   state.posAt = Date.now();
   pushFix(p.coords.speed);
+  trackFix({ ...state.pos, acc: state.acc, at: state.posAt });
   setPosDot(state.pos);
   if (mainMap && follow && sheetEl.hidden && !stamping) mainMap.panTo([state.pos.lat, state.pos.lng], { animate: !reduceMotion() });
   updateNear();
@@ -761,7 +826,7 @@ function drawNear(best) {
     h('button', { class: 'nearmain', type: 'button', onclick: () => focusSpot(spot) },
       h('span', { class: 'arrow', style: `transform:rotate(${deg}deg)`, 'aria-hidden': 'true' }, '↑'),
       h('span', { class: 'nt' }, `${spot.name} まで ${fmtDist(distance)}`)),
-    can && !done ? h('button', { class: 'nearpush', type: 'button', onclick: () => stamp(spot) }, season ? `季節の判子を押す（${season.label}）` : '判子を押す') : null].filter(Boolean));
+    can && !done ? h('button', { class: 'nearpush', type: 'button', 'data-sfx': 'stamp', onclick: () => stamp(spot) }, season ? `季節の判子を押す（${season.label}）` : '判子を押す') : null].filter(Boolean));
   nearEl.hidden = false;
   document.body.classList.add('hasnear');
 }
@@ -798,8 +863,8 @@ function nearAlertNote() {
 
 // ---------- 帳面 ----------
 function openBook() {
-  const tabs = [['spots', '場所'], ['seals', '印'], ['prefs', '都道府県'], ['more', 'その他']];
-  const body = state.tab === 'seals' ? bookSeals() : state.tab === 'prefs' ? bookPrefs() : state.tab === 'more' ? bookMore() : bookSpots();
+  const tabs = [['spots', '場所'], ['seals', '印'], ['foods', 'ご当地'], ['prefs', '都道府県'], ['more', 'その他']];
+  const body = state.tab === 'seals' ? bookSeals() : state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : state.tab === 'more' ? bookMore() : bookSpots();
   showSheet(openBook, [
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
       class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button', onclick: () => { state.tab = k; openBook(); },
@@ -880,8 +945,111 @@ async function deleteSeal(s) {
   render();
 }
 
+// ---------- ご当地グルメ ----------
+const mealsFor = (food) => state.meals.filter((m) => m.itemKey === food.key);
+function foodsByPref() {
+  const byPref = new Map();
+  for (const f of state.foods) {
+    if (!byPref.has(f.pref)) byPref.set(f.pref, []);
+    byPref.get(f.pref).push(f);
+  }
+  return byPref;
+}
+function bookFoods() {
+  if (!state.foods.length) return [h('p', { class: 'muted' }, 'まだ読み込めていません')];
+  const byPref = foodsByPref();
+  const mains = state.foods.filter((f) => f.main);
+  const gotMains = mains.filter((f) => mealsFor(f).length > 0);
+  const head = h('div', { class: 'listhead' }, h('b', {}, 'ご当地グルメ'), h('span', { class: 'muted' }, '農林水産省「うちの郷土料理」より'), h('span', { class: 'n' }, `${gotMains.length} / ${mains.length}`));
+  const foodRow = (f) => h('button', {
+    class: 'row' + (mealsFor(f).length ? ' got' : ''), type: 'button', onclick: () => openFoodSheet(f),
+  }, h('span', {}, `${mealsFor(f).length ? '● ' : ''}${f.name}`), h('span', { class: 'muted' }, ''));
+  const groups = [...PREF_ORDER, ''].filter((p) => byPref.has(p)).map((pref) => {
+    const items = byPref.get(pref);
+    const mainItems = items.filter((f) => f.main);
+    const otherItems = items.filter((f) => !f.main);
+    const got = mainItems.filter((f) => mealsFor(f).length > 0).length;
+    const masus = mainItems.length ? h('div', { class: 'masus' }, mainItems.map((f) => h('button', {
+      class: 'masu' + (mealsFor(f).length ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: f.name,
+      onclick: () => openFoodSheet(f),
+    }, glyphOf(f.name)))) : null;
+    const others = otherItems.length ? h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, `ほかの郷土料理（${otherItems.length}品）`),
+      otherItems.map(foodRow)) : null;
+    return h('details', { class: 'prefgroup' + (got ? ' got' : '') },
+      h('summary', {}, h('span', {}, pref || '都道府県不明'), h('span', { class: 'n' }, `${got} / ${mainItems.length}`)),
+      masus, others);
+  });
+  return [head, h('div', { class: 'prefgroups' }, groups)];
+}
+function foodRecordRow(m) {
+  return h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto') },
+    m.photoId ? imgFor(m.photoId, 'ph') : null,
+    h('div', {},
+      h('div', { class: 't' }, fmtDate(m.at)),
+      m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null,
+      h('button', { class: 'btn danger', type: 'button', style: 'min-height:32px;margin-top:6px;padding:0 10px;font-size:13px', onclick: () => deleteMeal(m) }, '削除')));
+}
+async function deleteMeal(m) {
+  if (!confirm('この記録を削除しますか？')) return;
+  await db.remove('meals', m.id);
+  if (m.photoId) await db.remove('photos', m.photoId);
+  await loadData();
+  openFoodSheet(state.foods.find((f) => f.key === m.itemKey));
+}
+function openFoodSheet(food) {
+  if (!food) { closeSheet(); return; }
+  const records = mealsFor(food).sort((a, b) => (a.at < b.at ? 1 : -1));
+  showSheet(() => openFoodSheet(food), [
+    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, food.name),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, food.pref),
+    h('p', {}, food.summary),
+    h('p', { class: 'muted' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
+    h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin:8px 0 14px', onclick: () => openMealRecord(food) }, '食べた'),
+    records.length ? h('div', { class: 'list' }, records.map(foodRecordRow)) : h('p', { class: 'muted' }, 'まだ記録がありません。'),
+  ]);
+}
+function openMealRecord(food) {
+  let photoBlob = null;
+  let dateTouched = false;
+  const date = h('input', { type: 'date', value: todayStr(now()), oninput: () => { dateTouched = true; } });
+  const note = h('textarea', { placeholder: 'ひとこと' });
+  const preview = h('img', { class: 'preview', alt: '', hidden: true });
+  const save = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    save.disabled = true;
+    try {
+      let photoId = null;
+      if (photoBlob) { photoId = db.newId(); await db.put('photos', { id: photoId, blob: photoBlob }); }
+      const meal = {
+        id: db.newId(), kind: 'food', name: food.name, itemKey: food.key, at: date.value || todayStr(now()),
+        pref: food.pref, note: note.value.trim(), photoId,
+      };
+      await db.put('meals', meal);
+      await loadData();
+      openFoodSheet(food);
+      toast('記録しました');
+    } catch (err) { save.disabled = false; toast('保存できませんでした：' + (err && err.message ? err.message : err)); }
+  } }, '記録する');
+  showSheet(null, [h('div', { class: 'form' },
+    h('h2', { style: 'font-size:20px' }, food.name),
+    h('p', { class: 'sub', style: 'margin:0' }, food.pref),
+    h('label', { class: 'f' }, '日付', date),
+    h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },
+      h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '写真を選ぶ',
+        h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async (e) => {
+          const f = e.target.files[0];
+          if (!f) return;
+          try {
+            const d = readExifDate(await f.arrayBuffer());
+            if (d && !dateTouched) date.value = d;
+          } catch { /* 日付が読めなくても続ける */ }
+          try { photoBlob = await resizePhoto(f); preview.src = URL.createObjectURL(photoBlob); preview.hidden = false; } catch (err) { toast(err.message); }
+        } })), preview)),
+    h('label', { class: 'f' }, 'ひとこと', note),
+    save)]);
+}
+
 function bookPrefs() {
-  const counts = prefsVisited(state.visits, state.seals, [], allListSpots());
+  const counts = prefsVisited(state.visits, state.seals, state.meals, allListSpots());
   const byPos = new Map(PREFS.map((p) => [`${p.row}_${p.col}`, p]));
   const cells = [];
   for (let r = 0; r <= 13; r++) {
@@ -897,7 +1065,7 @@ function bookPrefs() {
   for (let r = 0; r <= 13; r++) { if (r !== 12) rows.push(...cells.slice(r * 10, r * 10 + 10)); }
   const visited = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   return [
-    h('p', { class: 'sub' }, `判子と印のある都道府県：${visited.length} / 47`),
+    h('p', { class: 'sub' }, `判子・印・ご当地グルメのある都道府県：${visited.length} / 47`),
     h('div', { class: 'prefgrid' }, rows),
     visited.length ? h('div', { class: 'spotlist' }, visited.map(([p, n]) => h('div', { class: 'row' }, h('span', {}, p), h('span', { class: 'muted' }, `${n}`)))) : h('p', { class: 'muted' }, 'まだありません'),
   ];
@@ -916,21 +1084,27 @@ function bookMore() {
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('vibrate'), onchange: (e) => setSetting('vibrate', e.target.checked) }), '押したら振動する'),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
+        h('input', { type: 'checkbox', checked: setting('sound'), onchange: (e) => setSetting('sound', e.target.checked) }), '効果音（iPhone はマナーモードだと鳴らないことがあります）'),
+      h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('nearalert'), onchange: (e) => toggleNearAlert(e.target.checked) }), '判子を押せる場所に着いたら知らせる（振動・通知）'),
       h('p', { class: 'muted', style: 'margin:0' }, nearAlertNote()),
       h('p', { class: 'muted', style: 'margin:0' }, '画面を消している間は位置を取れないので押せません。')),
     h('p', { class: 'muted' }, 'データはこの端末の中だけにあります。機種変更の前に書き出してください。'),
-    h('p', { class: 'muted' }, '出典：地図 ' + '国土地理院（淡色地図）／場所のデータ Wikidata（CC0）。位置情報は端末の外には送りません。'),
+    h('p', { class: 'muted' }, '出典：地図 ' + '国土地理院（淡色地図）／場所のデータ Wikidata（CC0）／郷土料理：農林水産省「うちの郷土料理」（一部を要約）。位置情報は端末の外には送りません。'),
   ];
 }
 
 // ---------- 日記 ----------
 function openDiary() {
-  const days = groupByDay(state.visits, state.seals);
+  const days = groupByDay(state.visits, state.seals, state.meals);
+  // 判子がなく、歩いた距離だけある日も出す
+  for (const day of Object.keys(dist.days)) if (distText(dist.days[day]) && !days.some((d) => d.date === day)) days.push({ date: day, visits: [], seals: [], meals: [] });
+  days.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   showSheet(openDiary, [
     h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '日記'),
     days.length ? days.map((d) => h('section', { class: 'day' },
       h('h3', {}, fmtDate(d.date)),
+      distText(dist.days[d.date]) ? h('p', { class: 'muted', style: 'margin:0 0 6px' }, `移動：${distText(dist.days[d.date])}`) : null,
       d.visits.map((v) => {
         const s = spotById(v.spotId);
         return h('div', { class: 'stampline' },
@@ -940,6 +1114,7 @@ function openDiary() {
       }),
       d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, false)))))
       : h('p', { class: 'muted' }, 'まだ記録がありません。'),
+    h('p', { class: 'muted', style: 'font-size:12px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。'),
   ]);
 }
 
@@ -968,7 +1143,7 @@ function openRecord() {
   const syncPref = () => { const s = spotSel.value ? spotById(spotSel.value) : null; if (s && s.pref) prefSel.value = s.pref; };
   let type = init.type;
   const chips = h('div', { class: 'chips' });
-  const drawChips = () => chips.replaceChildren(...SEAL_TYPES.map((t) => h('button', { class: 'chip' + (t === type ? ' on' : ''), type: 'button', onclick: () => { type = t; typeTouched = true; drawChips(); } }, t)));
+  const drawChips = () => chips.replaceChildren(...SEAL_TYPES.map((t) => h('button', { class: 'chip' + (t === type ? ' on' : ''), type: 'button', onclick: () => { type = t; typeTouched = true; drawChips(); updateFoodHint(); } }, t)));
   spotSel.addEventListener('change', () => {
     picked = null; syncPref();
     const s = spotSel.value ? spotById(spotSel.value) : null;
@@ -976,6 +1151,17 @@ function openRecord() {
   });
   syncPref();
   drawChips();
+  // 「写真・メモ」でひとことに郷土料理らしい名前を書いたら、ご当地グルメの記録として誘う（軽い連携）
+  const foodHint = h('div', { class: 'f', hidden: true });
+  const updateFoodHint = () => {
+    const key = type === MEMO_TYPE ? classifyFood(note.value, state.foods) : null;
+    const food = key ? state.foods.find((f) => f.key === key) : null;
+    foodHint.hidden = !food;
+    if (food) foodHint.replaceChildren(h('button', {
+      class: 'chip', type: 'button', onclick: () => { closeSheet(); openMealRecord(food); },
+    }, `「${food.name}」（${food.pref}）の記録にする？`));
+  };
+  note.addEventListener('input', updateFoodHint);
   const pickBox = h('div');
   const pickBtn = h('button', { class: 'btn', type: 'button', onclick: () => {
     pickBtn.hidden = true;
@@ -1030,6 +1216,7 @@ function openRecord() {
     h('label', { class: 'f' }, '近くの場所', spotSel), pickBtn, pickBox,
     h('label', { class: 'f' }, '都道府県', prefSel),
     h('label', { class: 'f' }, 'ひとこと', note),
+    foodHint,
     save)]);
 }
 
@@ -1073,6 +1260,7 @@ async function importData(e) {
     await db.importAll(JSON.parse(await f.text()));
     dropPhotoCache();
     await loadData();
+    await loadDist();
     render();
     toast('読み込みました');
   } catch (err) { toast('読み込めませんでした：' + (err && err.message ? err.message : err)); }
@@ -1099,7 +1287,7 @@ function openWelcome(done) {
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上の「今月のお題」は、いま見頃の場所です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・道の駅などの名所、緑＝近所の神社・お寺・温泉・銭湯。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
-      h('li', {}, '上の「徒歩・自転車・車・電車・飛行機」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。'),
+      h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩は回って戻ると約4kmのお題、旅行は全国の一覧の場所だけを出します。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),
@@ -1121,7 +1309,8 @@ function startLocation() {
 (async () => {
   try {
     await loadData();
-    state.mode = await db.getSetting('mode', 'walk');
+    state.mode = normalizeMode(await db.getSetting('mode', 'walk'));
+    await loadDist();
   } catch (err) {
     mapEl.textContent = '保存領域を開けませんでした：' + (err && err.message ? err.message : err);
     return;

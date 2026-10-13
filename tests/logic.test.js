@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits,
+  modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -61,12 +61,13 @@ test('spotsForMode: 範囲と種類', () => {
   const ids = (mode) => spotsForMode(spots, mode, base).map((s) => s.id);
   assert.deepEqual(ids('walk').sort(), ['list1', 'near1']);
   assert.deepEqual(ids('bike').sort(), ['list1', 'list9', 'near1', 'near9']);
-  assert.deepEqual(ids('train').sort(), ['list1', 'list50', 'list9']);
-  assert.deepEqual(ids('car').sort(), ['list1', 'list50', 'list9']);
+  assert.deepEqual(ids('trip').sort(), ['list1', 'list200', 'list50', 'list9']); // 旅行は一覧の場所だけ、全国
   assert.equal(spotsForMode(spots, 'walk', base)[0].distance < 2000, true);
-  assert.equal(spotsForMode(spots, 'car', null).length, 4); // 位置がなければ種類だけ
-  assert.equal(modeAllows({ tier: 'near', lists: [] }, 'train'), false);
-  assert.deepEqual(ids('plane').sort(), ['list1', 'list200', 'list50', 'list9']);
+  assert.equal(spotsForMode(spots, 'trip', null).length, 4); // 位置がなければ種類だけ
+  assert.equal(modeAllows({ tier: 'near', lists: [] }, 'trip'), false);
+  // 前の版の車・電車・飛行機は旅行として扱う
+  assert.equal(normalizeMode('car'), 'trip'); assert.equal(normalizeMode('plane'), 'trip'); assert.equal(normalizeMode('walk'), 'walk'); assert.equal(normalizeMode('xyz'), 'walk');
+  assert.deepEqual(ids('train').sort(), ids('trip').sort());
 });
 
 test('monthlyQuests: 旅のしかたの範囲の外は出さない', () => {
@@ -74,7 +75,7 @@ test('monthlyQuests: 旅のしかたの範囲の外は出さない', () => {
   const spots = [sp('near', 5000), sp('mid', 50000), sp('far', 150000)];
   const ids = (mode) => monthlyQuests(spots, new Date(2026, 9, 13), mode, base).map((s) => s.id);
   assert.deepEqual(ids('bike'), ['near']);
-  assert.deepEqual(ids('car'), ['near', 'mid']);
+  assert.deepEqual(ids('trip'), ['near', 'mid', 'far']);
   assert.deepEqual(ids('walk'), []);
 });
 
@@ -135,7 +136,7 @@ test('shouldAutoStamp: どの旅のしかたでも、範囲の中にしばらく
   assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(10, 60000)], 'bike', [], now), false);
   assert.equal(shouldAutoStamp(spot, [fx(10, 0, { speed: 1 })], 'car', [], now), false);
   // しばらくいたら押す
-  for (const mode of ['walk', 'bike', 'car', 'train', 'plane']) assert.equal(shouldAutoStamp(spot, stay, mode, [], now), true, mode);
+  for (const mode of ['walk', 'bike', 'trip']) assert.equal(shouldAutoStamp(spot, stay, mode, [], now), true, mode);
   // 途中で範囲の外に出たら、数え直し
   assert.equal(shouldAutoStamp(spot, [fx(10, 0), fx(500, 60000), fx(10, 120000), fx(10, AUTO_DWELL_MS)], 'walk', [], now), false);
   // 精度が悪い・範囲外・一覧にない・座標なし・今日押した は押さない
@@ -193,7 +194,7 @@ test('dailyQuests: 徒歩・自転車だけ、範囲内のまだ押していな�
   assert.equal(a.length, 3);
   assert.ok(a.every((s) => s.daily && s.distance <= 2000 && s.id !== 'far' && s.id !== 'season'));
   assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, none, none).map((s) => s.id), a.map((s) => s.id));
-  assert.equal(dailyQuests(spots, '2026-10-13', 'car', pos, none, none).length, 0);
+  assert.equal(dailyQuests(spots, '2026-10-13', 'trip', pos, none, none).length, 0);
   assert.equal(dailyQuests(spots, '2026-10-13', 'walk', null, none, none).length, 0);
   // 前に押した場所は出さない。今日押した場所は残す
   const before = new Set(a.map((s) => s.id));
@@ -218,7 +219,7 @@ test('pickNear: 今いて押せる場所を先に、押した・通った後は�
   assert.equal(pickNear(pos, [tooFar], 10, none, none), null);
 });
 
-test('徒歩の今日のお題：回って戻ると約4kmになる2〜3か所を、回る順に', () => {
+test('散歩の今日のお題：回って戻ると約2.5km（30分）になる2〜3か所を、回る順に', () => {
   const pos = { lat: 35.68, lng: 139.76 };
   // 0.0005度刻み（約55m）〜2km 弱まで、いろいろな向きに40か所
   const spots = Array.from({ length: 40 }, (_, i) => {
@@ -228,16 +229,15 @@ test('徒歩の今日のお題：回って戻ると約4kmになる2〜3か所を
   const none = new Set();
   const q = dailyQuests(spots, '2026-10-13', 'walk', pos, none, none);
   assert.ok(q.length >= 2 && q.length <= 3);
-  assert.ok(Math.abs(q[0].loop - 4000) <= 1000, `道のり ${q[0].loop}m`);
+  assert.ok(Math.abs(q[0].loop - 2500) <= 700, `道のり ${q[0].loop}m`);
   // 回る順：bestLoop で並べ直しても同じ順（か逆回り）で、同じ道のり
   const r = bestLoop(pos, q);
   assert.equal(r.meters, q[0].loop);
   // 同じ日は同じ組み合わせ
   assert.deepEqual(dailyQuests(spots, '2026-10-13', 'walk', pos, none, none).map((s) => s.id), q.map((s) => s.id));
-  // 自転車はこれまでどおり近い順3件、loop は付かない
+  // サイクリングも回るお題（loop が付く）
   const b = dailyQuests(spots, '2026-10-13', 'bike', pos, none, none);
-  assert.equal(b.length, 3);
-  assert.ok(b.every((s) => s.loop === undefined));
+  assert.ok(b.length >= 2 && b.every((s) => s.loop > 0));
 });
 
 test('今日のお題は種類が分かれるように選ぶ', () => {
@@ -252,4 +252,75 @@ test('今日のお題は種類が分かれるように選ぶ', () => {
     const q = dailyQuests(spots, '2026-10-14', mode, pos, none, none);
     assert.equal(new Set(q.map((s) => s.kind)).size, q.length, `${mode}: ${q.map((s) => s.kind)}`);
   }
+});
+
+test('今日のお題はご飯・寺社・その他から1つずつ', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  // 喫茶店が大半の都心を想定
+  const kinds = ['cafe', 'cafe', 'cafe', 'cafe', 'cafe', 'bakery', 'shrine', 'museum'];
+  const spots = Array.from({ length: 64 }, (_, i) => {
+    const r = 0.003 + 0.0002 * i; const a = i * 2.4;
+    return { id: `c${i}`, kind: kinds[i % kinds.length], tier: 'near', lat: pos.lat + r * Math.cos(a), lng: pos.lng + r * Math.sin(a) };
+  });
+  const none = new Set();
+  for (const mode of ['walk', 'bike']) {
+    const q = dailyQuests(spots, '2026-10-14', mode, pos, none, none);
+    assert.deepEqual(q.map(questCategory).sort(), ['food', 'other', 'sacred'], `${mode}: ${q.map((s) => s.kind)}`);
+  }
+});
+
+test('サイクリングの今日のお題：回って戻ると約7.5km（30分）', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  const kinds = ['cafe', 'shrine', 'museum', 'temple', 'bakery', 'sight'];
+  const spots = Array.from({ length: 60 }, (_, i) => {
+    const r = 0.004 + 0.0014 * i; const a = i * 2.4; // 〜9km
+    return { id: `b${i}`, kind: kinds[i % kinds.length], tier: 'near', lat: pos.lat + r * Math.cos(a), lng: pos.lng + r * Math.sin(a) / Math.cos(pos.lat * Math.PI / 180) };
+  });
+  const q = dailyQuests(spots, '2026-10-14', 'bike', pos, new Set(), new Set());
+  assert.ok(Math.abs(q[0].loop - 7500) <= 1500, `道のり ${q[0].loop}m`);
+  assert.ok(q.every((s) => s.distance <= 10000));
+});
+
+test('classifyFood: 表記ゆれ（ひらがな/カタカナ、「鍋」「汁」の有無）を吸収して当てる', () => {
+  const foods = [
+    { key: 'kiritampo', name: 'きりたんぽ鍋', pref: '秋田県' },
+    { key: 'houtou', name: 'ほうとう', pref: '山梨県' },
+    { key: 'zoni', name: '雑煮', pref: '東京都' },
+  ];
+  assert.equal(classifyFood('きりたんぽ', foods), 'kiritampo'); // 「鍋」なしでも当たる
+  assert.equal(classifyFood('キリタンポ鍋を食べた', foods), 'kiritampo'); // カタカナでも当たる
+  assert.equal(classifyFood('ほうとうを食べた', foods), 'houtou');
+  assert.equal(classifyFood('冷やし中華', foods), null); // 当たらなければ null
+  assert.equal(classifyFood('', foods), null);
+  assert.equal(classifyFood('何か', null), null);
+});
+
+test('prefsVisited: meals（ご当地グルメ）も都道府県の塗りに数える', () => {
+  const spots = [{ id: 's1', pref: '山梨県' }];
+  const meals = [{ pref: '秋田県' }, { spotId: 's1' }, { pref: '' }];
+  const counts = prefsVisited([], [], meals, spots);
+  assert.deepEqual(counts, { 秋田県: 1, 山梨県: 1 });
+});
+
+test('groupByDay: meals も日付にまとめる', () => {
+  const meals = [{ at: '2026-05-01', name: 'きりたんぽ鍋' }, { at: '2026-05-03', name: 'ほうとう' }];
+  const days = groupByDay([], [], meals);
+  assert.deepEqual(days.map((d) => d.date), ['2026-05-03', '2026-05-01']);
+  assert.deepEqual(days[1].meals.map((m) => m.name), ['きりたんぽ鍋']);
+});
+
+test('addTrack：揺れ・精度の悪い位置・飛びは数えない', () => {
+  const p = (dLat, sec, acc = 10) => ({ lat: 35 + dLat, lng: 139, acc, at: sec * 1000 });
+  let t = {};
+  t = addTrack(t, p(0, 0));
+  t = addTrack(t, p(0.00005, 10)); // 約5.6m：揺れ
+  assert.equal(t.meters, 0);
+  t = addTrack(t, p(0.0009, 60)); // 約100m 進んだ
+  assert.ok(Math.abs(t.meters - 100) < 3, `${t.meters}`);
+  t = addTrack(t, p(0.002, 90, 80)); // 精度が悪い
+  assert.ok(Math.abs(t.meters - 100) < 3);
+  t = addTrack(t, p(0.05, 100)); // 10秒で5km：飛び
+  assert.ok(Math.abs(t.meters - 100) < 3);
+  t = addTrack(t, p(0.0509, 2000)); // 10分以上あいた
+  assert.ok(Math.abs(t.meters - 100) < 3);
 });
