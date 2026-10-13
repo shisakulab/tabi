@@ -16,7 +16,7 @@ const SEAL_COLOR = '#b8423a';
 const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で', plane: '飛行機で' };
 const SEAL_TYPES = ['御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
-const MIN_ZOOM_NEAR = 13; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない
+const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない。都心は数が多く、引くと地図が埋まる
 
 const $ = (id) => document.getElementById(id);
 const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); const modesEl = $('modes');
@@ -247,7 +247,7 @@ function hankoIcon(spot) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
   const color = isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
-  const cls = ['hanko', isSeason ? 'season' : '', mine.length ? '' : 'empty', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
+  const cls = ['hanko', isSeason ? 'season' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
   const node = mine.length
     ? h('div', { class: cls, style: `--c:${color}` }, h('div', { class: 'face' }, h('span', {}, mark)), mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
@@ -897,7 +897,7 @@ function openWelcome(done) {
 function startLocation() {
   getPos().then((pos) => {
     if (!pos || !mainMap) return;
-    mainMap.setView([pos.lat, pos.lng], 14);
+    mainMap.setView([pos.lat, pos.lng], MIN_ZOOM_NEAR);
     setPosDot(pos);
     updateNear();
     drawQuest();

@@ -9,7 +9,7 @@
 
 一覧（Wikidata）：世界遺産（日本。P757 かつ P17=Q17、radius 500）、重伝建（P1435=Q850649、radius 300）、日本100名城（P361=Q1139439、radius 300）、続日本100名城（P361=Q30927700、radius 300）、名水百選（P361=Q10917783、radius 50）、日本の滝百選（P361=Q40172600、radius 150）
 
-近所の場所（OSM。**2026-10-13 時点の公開データには未収録**。Overpass が混んで取れないため `tools/osm-extract.py` で Geofabrik のファイルから作る予定。`--no-osm` を付けると入れずに作る）：神社・お寺（amenity=place_of_worship＋religion=shinto/buddhist）、温泉（natural=hot_spring、または amenity=public_bath で bath:type=onsen か名前に「温泉」）、銭湯（それ以外の amenity=public_bath。足湯・私有は除く）。名前のないものは入れない
+近所の場所（OSM。Overpass は混んで取れないことが多いので、`tools/osm-extract.py` で Geofabrik の地方ごとのファイルから tools/.cache に作ってから build する。`--no-osm` を付けると入れずに作る）：神社・お寺（amenity=place_of_worship＋religion=shinto/buddhist）、温泉（natural=hot_spring、または amenity=public_bath で bath:type=onsen か名前に「温泉」）、銭湯（それ以外の amenity=public_bath。足湯・私有は除く）。名前のないものは入れない
 
 ## 出典
 場所のデータは [Wikidata](https://www.wikidata.org/)（CC0）と [OpenStreetMap](https://www.openstreetmap.org/copyright)（© OpenStreetMap contributors、ODbL）。地図は国土地理院。
