@@ -314,7 +314,7 @@ function showCard(spot) {
   card = h('div', { class: 'spotcard' },
     h('h3', {}, spot.name),
     h('p', { class: 'sub', style: 'margin:2px 0 6px' },
-      spotTags(spot).map((t) => h('span', { class: 'tag ' + spot.tier }, t)),
+      spotTags(spot).map((t) => h('span', { class: 'tag t-' + spot.tier }, t)),
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
       spot.pref ? ` ${spot.pref}` : '', dist !== null ? `　${fmtDist(dist)}` : ''),
     spot.note ? h('p', { style: 'margin:4px 0' }, spot.note) : null,
@@ -337,6 +337,13 @@ function gmapUrl(spot, route) {
   return route
     ? `https://www.google.com/maps/dir/?api=1&destination=${ll}`
     : `https://www.google.com/maps/search/${encodeURIComponent(spot.name)}/@${ll},17z`;
+}
+
+// 場所の札：OSM の場所は種類（神社・銭湯・灯台など）、一覧の場所は入っている一覧の名前（季節の名所は別の札で出すので除く）
+const BIG_LISTS = ['heritage', 'judenken'];
+function spotTags(spot) {
+  if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
+  return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
 }
 
 function setPosDot(pos) {
@@ -882,7 +889,8 @@ function openWelcome(done) {
     h('ul', { class: 'welcome' },
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上の「今月のお題」は、いま見頃の場所です。'),
-      h('li', {}, '上の「徒歩・自転車・電車・車」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。'),
+      h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・道の駅などの名所、緑＝近所の神社・お寺・温泉・銭湯。押すと塗りつぶしになります。'),
+      h('li', {}, '上の「徒歩・自転車・車・電車・飛行機」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),
