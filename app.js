@@ -4,18 +4,19 @@ import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate,
-  MODES, TIERS, PREFS, NEAR_METERS,
+  MODES, NEAR_KINDS, PREFS, NEAR_METERS,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
 const GSI_ATTR = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">国土地理院</a>';
-const WD_ATTR = '<a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a>（CC0）';
+const WD_ATTR = '<a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a>（CC0）・<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>（ODbL）';
 const TOKYO = { lat: 35.681236, lng: 139.767125 };
-const TIER_COLOR = { far: '#2b4c7e', day: '#1f7a8c', town: '#7a8f5b' };
+const TIER_COLOR = { list: '#2b4c7e', near: '#7a8f5b' };
 const SEAL_COLOR = '#b8423a';
 const MODE_VERB = { walk: '歩いて', bike: '自転車で', train: '電車で', car: '車で' };
 const SEAL_TYPES = ['御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
-const MIN_ZOOM_ALL = 10; // これより引いているときは遠征級だけ
+const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
+const MIN_ZOOM_NEAR = 13; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない
 
 const $ = (id) => document.getElementById(id);
 const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); const modesEl = $('modes');
@@ -133,7 +134,7 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）を地点にする
 async function loadCatalog() {
   const [lists, coords] = await Promise.all([fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {})]);
-  state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, tier: l.tier }));
+  state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note }));
   for (const l of lists.lists) {
     for (const [id, name, pref, hasCoord] of l.items) {
       const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, lists: [] };
@@ -146,11 +147,11 @@ async function loadCatalog() {
     const lat = Number.isFinite(s.lat) ? s.lat : c ? c.lat : null;
     const lng = Number.isFinite(s.lng) ? s.lng : c ? c.lng : null;
     return {
-      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.pref || '', lat, lng, tier: s.tier || 'day', radius: s.radius || 50,
+      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.pref || '', lat, lng, tier: 'list', radius: s.radius || 50,
       lists: ['seasons'], seasons: [{ months: s.months, label: s.label, mark: s.mark }], note: s.note || '',
     };
   });
-  state.lists.push({ key: 'seasons', name: '季節の名所', note: '見頃の月に行くと季節の判子', tier: 'day' });
+  state.lists.push({ key: 'seasons', name: '季節の名所', note: '見頃の月に行くと季節の判子' });
 }
 
 // 区画ファイル data/spots/<key>.json
@@ -245,7 +246,7 @@ const sameMonth = (v, d) => { const x = new Date(v.at); return x.getFullYear() =
 function hankoIcon(spot) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
-  const color = isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.day;
+  const color = isSeason ? SEAL_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
   const cls = ['hanko', isSeason ? 'season' : '', mine.length ? '' : 'empty', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
   const node = mine.length
@@ -286,9 +287,13 @@ async function drawMap() {
   const keys = tilesForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
   await ensureTiles(keys);
   if (seq !== drawSeq) return;
-  const far = mainMap.getZoom() < MIN_ZOOM_ALL;
+  const z = mainMap.getZoom();
+  const shown = (s) => (z < MIN_ZOOM_ALL ? !!s.seasons || BIG_LISTS.some((k) => (s.lists || []).includes(k))
+    : z < MIN_ZOOM_NEAR ? s.tier !== 'near' : true);
+  // 一覧に入っている場所を先に置く（300件で切るとき近所の場所から落とす）
   const list = [...spotsIn(keys), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))]
-    .filter((s) => b.contains([s.lat, s.lng]) && modeAllows(s, state.mode) && (!far || s.tier === 'far'))
+    .filter((s) => b.contains([s.lat, s.lng]) && modeAllows(s, state.mode) && shown(s))
+    .sort((a, c) => (a.tier === 'near') - (c.tier === 'near'))
     .slice(0, 300);
   layer.clearLayers();
   markers.clear();
@@ -309,7 +314,7 @@ function showCard(spot) {
   card = h('div', { class: 'spotcard' },
     h('h3', {}, spot.name),
     h('p', { class: 'sub', style: 'margin:2px 0 6px' },
-      h('span', { class: 'tag ' + spot.tier }, TIERS[spot.tier]),
+      spotTags(spot).map((t) => h('span', { class: 'tag ' + spot.tier }, t)),
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
       spot.pref ? ` ${spot.pref}` : '', dist !== null ? `　${fmtDist(dist)}` : ''),
     spot.note ? h('p', { style: 'margin:4px 0' }, spot.note) : null,
@@ -317,8 +322,26 @@ function showCard(spot) {
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => stamp(spot) }, '判子を押す'),
-      h('button', { class: 'btn', type: 'button', onclick: closeCard }, '閉じる')));
+      h('button', { class: 'btn', type: 'button', onclick: closeCard }, '閉じる')),
+    h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
+      h('a', { class: 'btn', href: gmapUrl(spot), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, 'Googleマップで開く'),
+      h('a', { class: 'btn', href: gmapUrl(spot, true), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, '経路')));
   document.body.append(card);
+}
+
+// Google マップの URL（アプリがあればアプリで開く）。名前で探すと同名の別の場所に飛ぶことがあるので座標で渡す
+function gmapUrl(spot, route) {
+  const ll = `${spot.lat},${spot.lng}`;
+  return route
+    ? `https://www.google.com/maps/dir/?api=1&destination=${ll}`
+    : `https://www.google.com/maps/search/?api=1&query=${ll}`;
+}
+
+// 場所の札：OSM の場所は種類（神社・銭湯・灯台など）、一覧の場所は入っている一覧の名前（季節の名所は別の札で出すので除く）
+const BIG_LISTS = ['heritage', 'judenken'];
+function spotTags(spot) {
+  if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
+  return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
 }
 
 function setPosDot(pos) {
@@ -427,7 +450,7 @@ function openQuests() {
       h('button', { class: 'rec nophoto', type: 'button', onclick: () => { closeSheet(); focusSpot(s); } },
         h('div', {},
           h('div', { class: 't' }, `${s.name}　${s.seasons[0].label}${questDone(s) ? '（押した）' : ''}`),
-          h('div', { class: 'n' }, [s.pref, TIERS[s.tier], s.distance !== null ? fmtDist(s.distance) : ''].filter(Boolean).join('・')),
+          h('div', { class: 'n' }, [s.pref, s.distance !== null ? fmtDist(s.distance) : ''].filter(Boolean).join('・')),
           s.note ? h('div', { class: 'n', style: 'white-space:normal' }, s.note) : null))))),
     qs.length ? null : h('p', { class: 'muted' }, '今月が見頃の名所は、まだ登録がありません。'),
   ]);
@@ -608,7 +631,7 @@ function bookSpots() {
       h('div', { class: 'listhead' }, h('b', {}, l.name), h('span', { class: 'muted' }, l.note || ''), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
       p.total ? h('div', { class: 'masus' }, p.cells.map((c) => h('button', {
         class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord ? '' : ' nocoord') + (isSeason ? ' season' : ''), type: 'button',
-        style: `--c:${TIER_COLOR[l.tier] || TIER_COLOR.day}`, title: c.name,
+        style: `--c:${TIER_COLOR.list}`, title: c.name,
         onclick: () => toast(`${c.name}${c.pref ? `（${c.pref}）` : ''}${c.hasCoord ? '' : '　位置が未登録のため判子は押せません'}`),
       }, glyphOf(c.name)))) : h('p', { class: 'muted' }, 'まだ登録がありません'),
       p.total ? h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, '名前の一覧'),
@@ -860,7 +883,7 @@ function openWelcome(done) {
   showSheet(null, [
     h('h1', { style: 'font-size:24px;margin:4px 0 10px' }, '旅暦へようこそ'),
     h('ul', { class: 'welcome' },
-      h('li', {}, '世界遺産・名水百選・重伝建など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
+      h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上の「今月のお題」は、いま見頃の場所です。'),
       h('li', {}, '上の「徒歩・自転車・電車・車」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),

@@ -1,4 +1,4 @@
-// Wikidata（SPARQL）から場所のデータを作る
+// Wikidata（SPARQL）と OpenStreetMap（Overpass）から場所のデータを作る
 //   node tools/build-spots.mjs            キャッシュがあれば再利用する
 //   node tools/build-spots.mjs --refresh  問い合わせ直す
 // 出力：data/spots/<0.5度区画>.json、data/spots/meta.json、data/lists.json、data/seasons-coords.json
@@ -21,12 +21,27 @@ const refresh = process.argv.includes('--refresh');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 一覧の定義。cond は ?s の絞り込み
+// tier は 'list'（一覧に入っている場所。車・電車でも出す）か 'near'（近所の場所。徒歩・自転車のときだけ出す）
 const LISTS = [
-  { key: 'heritage', name: '世界遺産', note: '日本の世界遺産の構成資産', tier: 'far', radius: 500, cond: '?s wdt:P757 [] ; wdt:P17 wd:Q17 .' },
-  { key: 'meisui', name: '名水百選', note: '環境省選定', tier: 'day', radius: 50, cond: '?s wdt:P361 wd:Q10917783 .' },
-  { key: 'judenken', name: '重伝建', note: '重要伝統的建造物群保存地区', tier: 'far', radius: 300, cond: '?s wdt:P1435 wd:Q850649 .' },
+  { key: 'heritage', name: '世界遺産', note: '日本の世界遺産の構成資産', radius: 500, cond: '?s wdt:P757 [] ; wdt:P17 wd:Q17 .' },
+  { key: 'judenken', name: '重伝建', note: '重要伝統的建造物群保存地区', radius: 300, cond: '?s wdt:P1435 wd:Q850649 .' },
+  { key: 'meijo100', name: '日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q1139439 .' },
+  { key: 'zokumeijo', name: '続日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q30927700 .' },
+  { key: 'meisui', name: '名水百選', note: '環境省選定', radius: 50, cond: '?s wdt:P361 wd:Q10917783 .' },
+  { key: 'taki100', name: '日本の滝百選', note: '1990年選定', radius: 150, cond: '?s wdt:P361 wd:Q40172600 .' },
+  // 国宝は美術工芸品も含む。美術品は所蔵館の位置で登録されていて1か所に何十件も重なるので、
+  // 所蔵（P195）があるものと、所在地（P276）が博物館のものを除く（残りはほぼ建造物）
+  { key: 'kokuho', name: '国宝', note: '国宝の建造物', radius: 150,
+    cond: '?s wdt:P1435 wd:Q1139795 ; wdt:P625 [] . FILTER NOT EXISTS { ?s wdt:P195 [] } FILTER NOT EXISTS { ?s wdt:P276 ?m . ?m wdt:P31/wdt:P279? wd:Q33506 }' },
+  { key: 'ichinomiya', name: '一宮', note: '各国の一宮（諸説あるものを含む）', radius: 150, cond: '?s wdt:P13723 wd:Q1656379 ; wdt:P625 [] .' },
+  { key: 'michinoeki', name: '道の駅', note: '国土交通省登録', radius: 150, cond: '?s wdt:P31 wd:Q1187691 .' },
 ];
-const TIER_RANK = { town: 0, day: 1, far: 2 };
+
+// OSM の近所の場所。都道府県ごとに Overpass で取る（全国を1回で取るとタイムアウトする）
+const OVERPASS = ['https://overpass-api.de/api/interpreter'];
+const PREF_ISO = ['北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
+  '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
+  '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'];
 
 async function sparql(query, name) {
   const file = path.join(CACHE, `${name}.json`);
@@ -45,6 +60,69 @@ async function sparql(query, name) {
   throw new Error(`${name}: 取得できませんでした`);
 }
 
+async function overpass(query, name) {
+  const file = path.join(CACHE, `${name}.json`);
+  if (!refresh && existsSync(file)) return JSON.parse(await readFile(file, 'utf8'));
+  for (let i = 0; i < 6; i++) {
+    if (i) await sleep(15000 * i);
+    const url = OVERPASS[i % OVERPASS.length];
+    // AbortSignal.timeout のタイマーはプロセスを生かしておかないので、応答待ちの間に node が終わってしまう。普通のタイマーを使う
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error('timeout')), 400000);
+    try {
+      const res = await fetch(url, { signal: ac.signal, method: 'POST', headers: { 'User-Agent': HEADERS['User-Agent'], 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(query) });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const json = await res.json();
+      if (json.remark && /timed out|error/i.test(json.remark)) throw new Error(json.remark);
+      await mkdir(CACHE, { recursive: true });
+      await writeFile(file, JSON.stringify(json.elements));
+      return json.elements;
+    } catch (err) { console.log(`${name}: 失敗 ${err.message}（再試行）`); } finally { clearTimeout(timer); }
+  }
+  throw new Error(`${name}: 取得できませんでした`);
+}
+
+// 温泉か銭湯か神社かお寺か灯台か。どれでもなければ null
+function nearKind(t) {
+  if (t.man_made === 'lighthouse') return 'lighthouse';
+  if (t.amenity === 'place_of_worship') return t.religion === 'shinto' ? 'shrine' : t.religion === 'buddhist' ? 'temple' : null;
+  if (t.natural === 'hot_spring') return 'onsen';
+  if (t.amenity === 'public_bath') {
+    if (t['bath:type'] === 'foot_bath' || t.access === 'private' || t.access === 'no') return null;
+    return t['bath:type'] === 'onsen' || /温泉/.test(t.name) ? 'onsen' : 'sento';
+  }
+  return null;
+}
+
+// 1つの都道府県の近所の場所：[[id, kind, name, lat, lng, 'near', radius, [], pref]]
+async function fetchNear(pref, i) {
+  const iso = `JP-${String(i + 1).padStart(2, '0')}`;
+  // 1回で全部取ると大きい県（北海道など）でタイムアウトするので、種類ごとに分けて取る
+  const groups = {
+    shinto: 'nwr["amenity"="place_of_worship"]["religion"="shinto"]["name"](area.a);',
+    buddhist: 'nwr["amenity"="place_of_worship"]["religion"="buddhist"]["name"](area.a);',
+    bath: 'nwr["amenity"="public_bath"]["name"](area.a); nwr["natural"="hot_spring"]["name"](area.a); nwr["man_made"="lighthouse"]["name"](area.a);',
+  };
+  const els = [];
+  for (const [g, body] of Object.entries(groups)) {
+    els.push(...await overpass(`[out:json][timeout:360];
+area["ISO3166-2"="${iso}"]->.a;
+( ${body} );
+out center;`, `osm-${iso}-${g}`));
+  }
+  const out = [];
+  for (const e of els) {
+    const t = e.tags || {};
+    const kind = nearKind(t);
+    const lat = e.lat ?? e.center?.lat; const lng = e.lon ?? e.center?.lon;
+    const name = (t['name:ja'] || t.name || '').trim();
+    if (!kind || !name || !Number.isFinite(lat)) continue;
+    // 灯台は遠くから目当てに行く場所なので、車・電車でも出す（tier: 'list'）
+    out.push([`${e.type[0]}${e.id}`, kind, name, +lat.toFixed(6), +lng.toFixed(6), kind === 'lighthouse' ? 'list' : 'near', e.type === 'node' ? 50 : 100, [], pref]);
+  }
+  return out;
+}
+
 const qidOf = (uri) => uri.value.split('/').pop();
 function parsePoint(v) {
   const m = /Point\(([-\d.]+) ([-\d.]+)\)/.exec(v || '');
@@ -56,8 +134,13 @@ async function fetchList(list) {
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }
     OPTIONAL { ?s rdfs:label ?l FILTER(LANG(?l) = "ja") } }`, `${list.key}-base`);
-  const prefRows = await sparql(`SELECT ?s ?pl WHERE { ${list.cond}
-    ?s wdt:P131+ ?p . ?p wdt:P31 wd:Q50337 . ?p rdfs:label ?pl FILTER(LANG(?pl) = "ja") }`, `${list.key}-pref`);
+  // 都道府県は、条件の重い一覧（国宝など）でタイムアウトしないよう、取れた id を VALUES で渡して引く
+  const ids = [...new Set(base.map((r) => qidOf(r.s)))];
+  const prefRows = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    prefRows.push(...await sparql(`SELECT ?s ?pl WHERE { VALUES ?s { ${ids.slice(i, i + 300).map((q) => 'wd:' + q).join(' ')} }
+    ?s wdt:P131+ ?p . ?p wdt:P31 wd:Q50337 . ?p rdfs:label ?pl FILTER(LANG(?pl) = "ja") }`, i ? `${list.key}-pref-${i}` : `${list.key}-pref`));
+  }
   const prefOf = new Map();
   for (const r of prefRows) { const id = qidOf(r.s); if (!prefOf.has(id)) prefOf.set(id, r.pl.value); }
   const items = new Map();
@@ -134,6 +217,11 @@ async function fetchSeasonCoords() {
 }
 
 async function main() {
+  // --warm-reverse：OSM のキャッシュだけを沖縄から逆順に作る（本体と並べて走らせると、Overpass の2枠を使えて速い）
+  if (process.argv.includes('--warm-reverse')) {
+    for (let i = PREF_ISO.length - 1; i >= 0; i--) { await fetchNear(PREF_ISO[i], i); console.log(`${PREF_ISO[i]}: キャッシュ済み`); }
+    return;
+  }
   await mkdir(path.join(OUT, 'spots'), { recursive: true });
   const spots = new Map(); // id → [id, kind, name, lat, lng, tier, radius, lists, pref]
   const listsOut = [];
@@ -142,17 +230,25 @@ async function main() {
     const items = await fetchList(list);
     counts[list.key] = { total: items.length, withCoord: items.filter((i) => i.lat !== null).length };
     console.log(`${list.name}: ${items.length} 件（座標あり ${counts[list.key].withCoord}）`);
-    listsOut.push({ key: list.key, name: list.name, note: list.note, tier: list.tier, items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0]) });
+    listsOut.push({ key: list.key, name: list.name, note: list.note, items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0]) });
     for (const it of items) {
       if (it.lat === null) continue;
       const cur = spots.get(it.id);
-      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, list.tier, list.radius, [list.key], it.pref]); continue; }
+      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, 'list', list.radius, [list.key], it.pref]); continue; }
       cur[7].push(list.key);
-      if (TIER_RANK[list.tier] > TIER_RANK[cur[5]]) cur[5] = list.tier;
       cur[6] = Math.max(cur[6], list.radius);
       if (!cur[8]) cur[8] = it.pref;
     }
   }
+  const nearCounts = {};
+  // --no-osm：近所の場所（OSM）を入れずに作る
+  if (!process.argv.includes('--no-osm')) for (const [i, pref] of PREF_ISO.entries()) {
+    const near = await fetchNear(pref, i);
+    for (const s of near) { spots.set(s[0], s); nearCounts[s[1]] = (nearCounts[s[1]] || 0) + 1; }
+    console.log(`${pref}: 近所の場所 ${near.length} 件`);
+    if (refresh || !existsSync(path.join(CACHE, `osm-JP-${String(i + 2).padStart(2, '0')}-bath.json`))) await sleep(5000);
+  }
+  counts.near = nearCounts;
   // 区画ごとに書く（古いファイルは消す）
   for (const f of await readdir(path.join(OUT, 'spots'))) await rm(path.join(OUT, 'spots', f));
   const tiles = new Map();
@@ -163,7 +259,7 @@ async function main() {
   }
   for (const [k, list] of tiles) await writeFile(path.join(OUT, 'spots', `${k}.json`), JSON.stringify(list));
   await writeFile(path.join(OUT, 'spots', 'meta.json'), JSON.stringify({
-    generatedAt: new Date().toISOString(), source: 'Wikidata (CC0)', spots: spots.size, tiles: [...tiles.keys()].sort(), counts,
+    generatedAt: new Date().toISOString(), source: 'Wikidata (CC0), OpenStreetMap contributors (ODbL)', spots: spots.size, tiles: [...tiles.keys()].sort(), counts,
     shape: '[id, kind, name, lat, lng, tier, radius, lists, pref]',
   }));
   // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0)]

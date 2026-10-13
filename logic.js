@@ -93,8 +93,10 @@ export function normalizeName(s) {
     .replace(/[\s・･]/g, '');
 }
 
-// ---------- 格と旅のしかた ----------
-export const TIERS = { far: '遠征級', day: '日帰り級', town: '街歩き級' };
+// ---------- 場所の種類と旅のしかた ----------
+// 場所は「一覧に入っている場所」（tier: 'list'。世界遺産・百選・季節の名所など）と「近所の場所」（tier: 'near'。OSM の温泉・銭湯・神社・お寺）の2つ
+// 灯台も OSM から取るが、遠くから目当てに行く場所なので tier は 'list'
+export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台' };
 export const MODES = {
   walk: { label: '徒歩', range: 2000 },
   bike: { label: '自転車', range: 10000 },
@@ -102,16 +104,13 @@ export const MODES = {
   car: { label: '車', range: 100000 },
 };
 
-// 旅のしかたで出す格か。徒歩はすべて。自転車は日帰り級以上と、一覧に入っている街歩き級。電車は日帰り級以上。車は遠征級・日帰り級
+// 旅のしかたで出す場所か。徒歩・自転車はすべて。電車・車は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
 export function modeAllows(spot, mode) {
-  const t = spot.tier;
-  if (mode === 'walk') return true;
-  if (mode === 'bike') return t === 'far' || t === 'day' || (t === 'town' && (spot.lists || []).length > 0);
-  if (mode === 'train' || mode === 'car') return t === 'far' || t === 'day';
+  if (mode === 'train' || mode === 'car') return spot.tier !== 'near';
   return true;
 }
 
-// 旅のしかたで範囲と格を絞る。位置があれば range 以内だけを、近い順に distance 付きで返す。位置がなければ格だけで絞る
+// 旅のしかたで範囲と種類を絞る。位置があれば range 以内だけを、近い順に distance 付きで返す。位置がなければ種類だけで絞る
 export function spotsForMode(spots, mode, pos) {
   const range = (MODES[mode] || MODES.walk).range;
   const list = spots.filter((s) => modeAllows(s, mode) && Number.isFinite(s.lat) && Number.isFinite(s.lng));

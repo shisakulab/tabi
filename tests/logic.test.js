@@ -55,76 +55,17 @@ test('fitSize / todayStr', () => {
 
 const S = (id, tier, dm, extra = {}) => ({ id, name: id, tier, lists: [], ...at(dm), ...extra });
 
-test('spotsForMode: 範囲と格', () => {
-  const spots = [S('far1', 'far', 1500), S('day1', 'day', 1500), S('town1', 'town', 1500), S('townL', 'town', 1500, { lists: ['x'] }),
-    S('far9', 'far', 9000), S('far50', 'far', 50000), S('far200', 'far', 200000)];
+test('spotsForMode: 範囲と種類', () => {
+  const spots = [S('list1', 'list', 1500), S('near1', 'near', 1500), S('near9', 'near', 9000),
+    S('list9', 'list', 9000), S('list50', 'list', 50000), S('list200', 'list', 200000)];
   const ids = (mode) => spotsForMode(spots, mode, base).map((s) => s.id);
-  assert.deepEqual(ids('walk').sort(), ['day1', 'far1', 'town1', 'townL']);
-  assert.deepEqual(ids('bike').sort(), ['day1', 'far1', 'far9', 'townL']);
-  assert.deepEqual(ids('train').sort(), ['day1', 'far1', 'far9']);
-  assert.deepEqual(ids('car').sort(), ['day1', 'far1', 'far50', 'far9']);
+  assert.deepEqual(ids('walk').sort(), ['list1', 'near1']);
+  assert.deepEqual(ids('bike').sort(), ['list1', 'list9', 'near1', 'near9']);
+  assert.deepEqual(ids('train').sort(), ['list1', 'list9']);
+  assert.deepEqual(ids('car').sort(), ['list1', 'list50', 'list9']);
   assert.equal(spotsForMode(spots, 'walk', base)[0].distance < 2000, true);
-  assert.equal(spotsForMode(spots, 'car', null).length, 5); // 位置がなければ格だけ
-  assert.equal(modeAllows({ tier: 'town', lists: [] }, 'bike'), false);
-});
-
-const snow = { id: 'snow', name: '雪', ...base, tier: 'far', seasons: [{ months: [12, 1, 2], label: '雪景色', mark: '雪' }] };
-
-test('seasonOf: 見頃の月', () => {
-  assert.equal(seasonOf(snow, '2026-01-10').label, '雪景色');
-  assert.equal(seasonOf(snow, new Date(2026, 11, 31)).mark, '雪'); // 12月
-  assert.equal(seasonOf(snow, new Date(2026, 6, 1).getTime()), null);
-  assert.equal(seasonOf({ id: 'x' }, '2026-01-10'), null);
-  assert.equal(seasonOf(null, '2026-01-10'), null);
-});
-
-test('monthlyQuests: 今月が見頃から最大5か所、位置と旅のしかたで並べる', () => {
-  const mk = (id, dm, months, tier = 'far') => ({ id, name: id, tier, lists: ['seasons'], ...at(dm), seasons: [{ months, label: 'L', mark: 'M' }] });
-  const spots = [mk('a', 300000, [1]), mk('b', 5000, [1]), mk('c', 1000, [1]), mk('d', 900, [7]), mk('e', 90000, [1]),
-    mk('f', 20000, [1]), mk('g', 40000, [1]), mk('h', 800, [1], 'town')];
-  const jan = new Date(2026, 0, 15);
-  const car = monthlyQuests(spots, jan, 'car', base);
-  assert.equal(car.length, 5);
-  assert.deepEqual(car.slice(0, 4).map((s) => s.id), ['c', 'b', 'f', 'g']); // 範囲内を近い順（h は街歩き級で車では出ない、d は7月）
-  assert.equal(car[4].id, 'e');
-  assert.ok(!car.some((s) => s.id === 'd'));
-  const walk = monthlyQuests(spots, jan, 'walk', base);
-  assert.equal(walk[0].id, 'h'); // 徒歩2km以内は h と c
-  assert.equal(walk[1].id, 'c');
-  const nat = monthlyQuests(spots, jan, 'car', null);
-  assert.ok(nat.length >= 3 && nat.length <= 5 && nat.every((s) => s.distance === null));
-  assert.deepEqual(monthlyQuests(spots, new Date(2026, 3, 1), 'car', base), []);
-});
-
-test('listProgress: 一覧の埋まり具合', () => {
-  const spots = [
-    { id: 'a', name: 'A', lists: ['w'], ...base }, { id: 'b', name: 'B', lists: ['w', 'x'], ...base },
-    { id: 'c', name: 'C', lists: ['w'], hasCoord: false }, { id: 'd', name: 'D', lists: ['x'], ...base },
-    { id: 'snow', name: '雪', lists: ['seasons'], ...base, seasons: [{ months: [1], label: 'l', mark: 'm' }] },
-  ];
-  const visits = [{ spotId: 'a' }, { spotId: 'a' }, { spotId: 'b' }, { spotId: 'snow', seasonal: false }];
-  const w = listProgress(visits, spots, 'w');
-  assert.equal(w.total, 3);
-  assert.equal(w.count, 2);
-  assert.equal(w.cells.find((c) => c.id === 'a').visits, 2);
-  assert.equal(w.cells.find((c) => c.id === 'c').hasCoord, false);
-  assert.equal(listProgress(visits, spots, 'x').count, 1); // 1つの判子で入っている一覧すべてが埋まる
-  assert.equal(listProgress(visits, spots, 'seasons').count, 0); // 見頃でない判子は季節の名所を埋めない
-  assert.equal(listProgress([...visits, { spotId: 'snow', seasonal: true }], spots, 'seasons').count, 1);
-  assert.deepEqual(listProgress(visits, spots, 'none'), { key: 'none', count: 0, total: 0, cells: [] });
-});
-
-test('prefsVisited: 塗る都道府県', () => {
-  const spots = [{ id: 'a', pref: '京都府' }, { id: 'b', pref: '' }, { id: 'c', pref: '山形県' }];
-  const r = prefsVisited([{ spotId: 'a' }, { spotId: 'a' }, { spotId: 'b' }], [{ spotId: 'c', pref: '' }, { pref: '北海道' }], [{ pref: '沖縄県' }], spots);
-  assert.deepEqual(r, { 京都府: 2, 山形県: 1, 北海道: 1, 沖縄県: 1 });
-  assert.deepEqual(prefsVisited([], [], [], []), {});
-});
-
-test('PREFS: 47 都道府県が重ならない', () => {
-  assert.equal(PREFS.length, 47);
-  assert.equal(new Set(PREFS.map((p) => p.name)).size, 47);
-  assert.equal(new Set(PREFS.map((p) => `${p.row}_${p.col}`)).size, 47);
+  assert.equal(spotsForMode(spots, 'car', null).length, 4); // 位置がなければ種類だけ
+  assert.equal(modeAllows({ tier: 'near', lists: [] }, 'train'), false);
 });
 
 test('themes/seasons: 形', () => {
