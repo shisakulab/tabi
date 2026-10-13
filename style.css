@@ -94,6 +94,12 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 /* 近所の場所（神社・銭湯など）はまだ押していないとき小さく出す */
 .hanko.near.empty { width: 22px; height: 22px; margin: 9px; border-width: 1.5px; }
 .hanko.near.empty .g { font-size: 11px; }
+/* まとめの丸（地図を引いたとき） */
+.group {
+  display: grid; place-items: center; border-radius: 50%; border: 2px dashed var(--ink2); background: rgba(255,255,255,.82);
+  font: 700 13px var(--serif); color: var(--ink);
+}
+.sdot { width: 12px; height: 12px; border-radius: 50%; background: var(--seal); border: 2px solid #fff; box-sizing: border-box; }
 /* 判子の色の見方（左下） */
 .legend {
   position: fixed; left: 8px; bottom: calc(var(--safe-b) + 34px); z-index: 450; display: grid; gap: 2px;

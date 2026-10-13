@@ -133,7 +133,8 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）を地点にする
 async function loadCatalog() {
-  const [lists, coords] = await Promise.all([fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {})]);
+  const [lists, coords, meta] = await Promise.all([fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {})]);
+  state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note }));
   for (const l of lists.lists) {
     for (const [id, name, pref, hasCoord] of l.items) {
@@ -284,24 +285,77 @@ async function drawMap() {
   if (!mainMap) return;
   const seq = ++drawSeq;
   const b = mainMap.getBounds();
-  const keys = tilesForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
-  await ensureTiles(keys);
-  if (seq !== drawSeq) return;
   const z = mainMap.getZoom();
-  const shown = (s) => (z < MIN_ZOOM_ALL ? !!s.seasons || BIG_LISTS.some((k) => (s.lists || []).includes(k))
-    : z < MIN_ZOOM_NEAR ? s.tier !== 'near' : true);
-  // 一覧に入っている場所を先に置く（300件で切るとき近所の場所から落とす）
-  const list = [...spotsIn(keys), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))]
-    .filter((s) => b.contains([s.lat, s.lng]) && modeAllows(s, state.mode) && shown(s))
-    .sort((a, c) => (a.tier === 'near') - (c.tier === 'near'))
-    .slice(0, 300);
+  const nearOk = modeAllows({ tier: 'near' }, state.mode);
+  const seasons = state.seasonSpots.filter((s) => Number.isFinite(s.lat) && b.contains([s.lat, s.lng]) && modeAllows(s, state.mode));
+  let list; let groups;
+  if (z < MIN_ZOOM_ALL) {
+    // 大きく引いたとき：区画は読まず、meta の件数をまとめて丸で出す。季節の名所だけは1つずつ
+    list = seasons;
+    groups = tileGroups(b, z, nearOk);
+  } else {
+    const keys = tilesForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
+    await ensureTiles(keys);
+    if (seq !== drawSeq) return;
+    const inView = spotsIn(keys).filter((s) => b.contains([s.lat, s.lng]) && modeAllows(s, state.mode));
+    // 一覧の場所は1つずつ。近所の場所は寄るまで（MIN_ZOOM_NEAR）近いものをまとめて数で出す
+    list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR), ...seasons].slice(0, 400);
+    groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near'), z);
+  }
+  if (seq !== drawSeq) return;
   layer.clearLayers();
   markers.clear();
+  for (const g of groups) {
+    L.marker([g.lat, g.lng], { icon: groupIcon(g.n), title: `${g.n} か所`, zIndexOffset: -1000 })
+      .on('click', () => mainMap.setView([g.lat, g.lng], z < MIN_ZOOM_ALL ? Math.min(z + 3, MIN_ZOOM_ALL) : MIN_ZOOM_NEAR, { animate: !reduceMotion() }))
+      .addTo(layer);
+  }
+  // とても引いているときは、季節の名所は小さな赤い点にする（大きな判子だと数の丸を隠す）
+  const dot = z < 8;
   for (const s of list) {
-    const m = L.marker([s.lat, s.lng], { icon: hankoIcon(s), title: s.name }).on('click', () => showCard(s));
+    const icon = dot ? L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'sdot' }), iconSize: [12, 12], iconAnchor: [6, 6] }) : hankoIcon(s);
+    const m = L.marker([s.lat, s.lng], { icon, title: s.name }).on('click', () => showCard(s));
     m.addTo(layer);
     markers.set(s.id, m);
   }
+}
+
+// まとめの丸。点線の丸に数を出す（まだ押していない場所の点線の判子と同じ見た目）
+function groupIcon(n) {
+  const size = n >= 1000 ? 52 : n >= 100 ? 44 : 36;
+  const label = n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  return L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'group', style: `width:${size}px;height:${size}px` }, label), iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+// 大きく引いたとき：区画（0.5度）の件数を、ズームに合わせた大きさの升でまとめる。位置は件数で重みをつけた区画の中心
+function tileGroups(b, z, nearOk) {
+  const cell = 0.5 * 2 ** Math.max(0, 8 - z);
+  const cells = new Map();
+  for (const [k, [nl, nn]] of Object.entries(state.tileCounts || {})) {
+    const n = nl + (nearOk ? nn : 0);
+    if (!n) continue;
+    const [lat0, lng0] = k.split('_').map(Number);
+    const lat = lat0 + 0.25; const lng = lng0 + 0.25;
+    if (!b.pad(0.2).contains([lat, lng])) continue;
+    const ck = `${Math.floor(lat / cell)}_${Math.floor(lng / cell)}`;
+    const c = cells.get(ck) || { n: 0, lat: 0, lng: 0 };
+    c.n += n; c.lat += lat * n; c.lng += lng * n;
+    cells.set(ck, c);
+  }
+  return [...cells.values()].map((c) => ({ n: c.n, lat: c.lat / c.n, lng: c.lng / c.n }));
+}
+
+// 中くらいのズーム：画面で 64px 四方の升ごとに近所の場所をまとめる
+function pixelGroups(spots, z) {
+  const cells = new Map();
+  for (const s of spots) {
+    const p = mainMap.project([s.lat, s.lng], z);
+    const ck = `${Math.floor(p.x / 64)}_${Math.floor(p.y / 64)}`;
+    const c = cells.get(ck) || { n: 0, lat: 0, lng: 0 };
+    c.n++; c.lat += s.lat; c.lng += s.lng;
+    cells.set(ck, c);
+  }
+  return [...cells.values()].map((c) => ({ n: c.n, lat: c.lat / c.n, lng: c.lng / c.n }));
 }
 
 function showCard(spot) {
@@ -340,7 +394,6 @@ function gmapUrl(spot, route) {
 }
 
 // 場所の札：OSM の場所は種類（神社・銭湯・灯台など）、一覧の場所は入っている一覧の名前（季節の名所は別の札で出すので除く）
-const BIG_LISTS = ['heritage', 'judenken'];
 function spotTags(spot) {
   if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
   return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);

@@ -260,6 +260,8 @@ async function main() {
   for (const [k, list] of tiles) await writeFile(path.join(OUT, 'spots', `${k}.json`), JSON.stringify(list));
   await writeFile(path.join(OUT, 'spots', 'meta.json'), JSON.stringify({
     generatedAt: new Date().toISOString(), source: 'Wikidata (CC0), OpenStreetMap contributors (ODbL)', spots: spots.size, tiles: [...tiles.keys()].sort(), counts,
+    // 区画ごとの件数 [一覧の場所, 近所の場所]。地図を引いたとき、区画を読まずに数だけ出すのに使う
+    tileCounts: Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]])),
     shape: '[id, kind, name, lat, lng, tier, radius, lists, pref]',
   }));
   // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0)]
