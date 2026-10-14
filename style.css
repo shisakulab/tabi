@@ -194,8 +194,8 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 }
 .locate.on { background: var(--accent); border-color: #fff; color: #fff; }
 .gear { bottom: calc(var(--safe-b) + 32px + 56px); width: 40px; height: 40px; }
-/* 設定は灰色の丸にして、現在地のボタンと見分けやすく */
-.locate.gear { background: #7b8789; border-color: #fff; color: #fff; }
+/* 設定：地をほかの丸いボタンと同じにして、歯車だけ灰色に */
+.locate.gear { background: var(--paper); border-color: var(--ink); color: #7b8789; }
 @media (max-width: 400px) {
   .fab { gap: 12px; padding: 0 52px; } /* 右下の現在地ボタンを避けつつ、左右同じ余白で真ん中にそろえる */
   .rbtn { width: 50px; height: 50px; font-size: 13px; }
@@ -276,6 +276,8 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   aspect-ratio: 1; border: 1px solid var(--line); border-radius: 5px; display: grid; place-items: center; align-content: center;
   font-size: 10px; line-height: 1.1; text-align: center; color: var(--ink2); padding: 0; overflow: hidden;
 }
+/* 帳面の国タブの世界地図 */
+.worldmap { height: 240px; border: 1px solid var(--line); border-radius: 10px; margin: 6px 0 12px; overflow: hidden; }
 button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .pref b { font-size: 12px; }
 .pref.got { background: var(--day); border-color: var(--day); color: #fff; }

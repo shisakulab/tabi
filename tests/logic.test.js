@@ -62,10 +62,10 @@ test('spotsForMode: 範囲と種類', () => {
   const ids = (mode) => spotsForMode(spots, mode, base).map((s) => s.id);
   assert.deepEqual(ids('walk').sort(), ['list1', 'near1']);
   assert.deepEqual(ids('bike').sort(), ['list1', 'list9', 'near1', 'near9']);
-  assert.deepEqual(ids('trip').sort(), ['list1', 'list200', 'list50', 'list9']); // 旅行は一覧の場所だけ、全国
+  assert.deepEqual(ids('trip').sort(), ['list1', 'list200', 'list50', 'list9', 'near1', 'near9']); // 旅行は世界、近所の場所も出す
   assert.equal(spotsForMode(spots, 'walk', base)[0].distance < 2000, true);
-  assert.equal(spotsForMode(spots, 'trip', null).length, 4); // 位置がなければ種類だけ
-  assert.equal(modeAllows({ tier: 'near', lists: [] }, 'trip'), false);
+  assert.equal(spotsForMode(spots, 'trip', null).length, 6); // 位置がなければ全部
+  assert.equal(modeAllows({ tier: 'near', lists: [] }, 'trip'), true);
   // 前の版の車・電車・飛行機は旅行として扱う
   assert.equal(normalizeMode('car'), 'trip'); assert.equal(normalizeMode('plane'), 'trip'); assert.equal(normalizeMode('walk'), 'walk'); assert.equal(normalizeMode('xyz'), 'walk');
   assert.deepEqual(ids('train').sort(), ids('trip').sort());

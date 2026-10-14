@@ -123,11 +123,9 @@ export const MODES = {
 };
 // 前の版で保存した旅のしかた（車・電車・飛行機）は旅行にする
 export function normalizeMode(mode) { return MODES[mode] ? mode : ['car', 'train', 'plane'].includes(mode) ? 'trip' : 'walk'; }
-const FAR_MODES = ['trip', 'train', 'car', 'plane'];
 
-// 旅のしかたで出す場所か。散歩・サイクリングはすべて。旅行は一覧に入っている場所だけ（近所の場所は数が多すぎるので出さない）
+// 旅のしかたで出す場所か。どの旅のしかたでも全部出す（2026-10-14：旅行でも近所の場所を消さない。旅先の神社や喫茶店も押せるように）
 export function modeAllows(spot, mode) {
-  if (FAR_MODES.includes(mode)) return spot.tier !== 'near';
   return true;
 }
 

@@ -315,7 +315,7 @@ fabEl.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-open]');
   if (!b) return;
   closeCard();
-  if (b.dataset.open === 'book') { spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; openBook(); }
+  if (b.dataset.open === 'book') { spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; prefDetail = null; countryDetail = null; openBook(); }
   else if (b.dataset.open === 'diary') openDiary();
   else openRecord();
 });
@@ -649,7 +649,13 @@ function drawModes() {
     h('button', {
       class: 'mode' + (k === state.mode ? ' on' : ''), type: 'button', 'aria-pressed': String(k === state.mode),
       onclick: async () => { state.mode = k; await db.setSetting('mode', k); drawModes(); drawMap(); drawQuest(); updateNear(); },
-    }, m.label, h('small', {}, m.note || `${m.range / 1000}km`))));
+    }, m.label, h('small', {}, modeSub(k)))));
+}
+// ボタンの下の小さい字：お題で回る時間（散歩・サイクリング）か、出す場所（旅行）。前は範囲の km を出していて意味が分かりにくかった
+function modeSub(k) {
+  if (k === 'walk') return `お題 歩いて${loopMinutes()}分`;
+  if (k === 'bike') return `お題 自転車${loopMinutes()}分`;
+  return '世界の名所';
 }
 
 // ---------- 今月のお題 ----------
@@ -700,7 +706,7 @@ function currentQuests() {
 // 回る道のりを「約2.5km・約3,600歩・約30分」に（散歩は時速5km、サイクリングは時速15km で歩数なし）
 // 今日のお題の長さ（分）。設定で 15・30・60 から選ぶ。初期は 30
 function loopMinutes() { try { const v = Number(localStorage.getItem(LS + 'loopmin')); return LOOP_MINUTE_CHOICES.includes(v) ? v : 30; } catch { return 30; } }
-function setLoopMinutes(v) { try { localStorage.setItem(LS + 'loopmin', String(v)); } catch { /* 保存できなくても続ける */ } drawQuest(); }
+function setLoopMinutes(v) { try { localStorage.setItem(LS + 'loopmin', String(v)); } catch { /* 保存できなくても続ける */ } drawQuest(); drawModes(); }
 const loopText = (m, mode = state.mode) => [`約${(m / 1000).toFixed(1)}km`, mode === 'walk' ? `約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩` : null, `約${Math.round(m / (LOOP_SPEED_KMH[mode] * 1000) * 60 / 5) * 5}分`].filter(Boolean).join('・');
 function questDone(spot) {
   const d = now();
@@ -988,7 +994,7 @@ function openBook() {
   showSheet(openBook, [
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
       class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button',
-      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; prefDetail = null; openBook(); },
+      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; prefDetail = null; countryDetail = null; openBook(); },
     }, label))),
     body,
   ]);
@@ -1299,7 +1305,58 @@ function globalSpots() {
 }
 
 let countryQuery = '';
+// 国を押すと、その国の場所を出す（都道府県と同じ形）
+let countryDetail = null;
+function bookCountryDetail(country) {
+  const spots = globalSpots();
+  const sections = state.lists.filter((l) => l.global).map((l) => {
+    const cells = listProgress(state.visits, spots, l.key).cells.filter((c) => (state.catalog.get(c.id) || {}).country === country);
+    if (!cells.length) return null;
+    const got = cells.filter((c) => c.got).length;
+    return h('details', { class: 'listgroup' + (got ? ' got' : ''), open: true },
+      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, `${got} / ${cells.length}`)),
+      h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
+  }).filter(Boolean);
+  return [
+    masuDetailPanel(),
+    h('div', { style: 'display:flex;gap:8px;align-items:center;margin:0 0 8px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { countryDetail = null; masuDetail = null; openBook(); } }, '‹ 国'),
+      h('h3', { style: 'margin:0;font-size:20px' }, country)),
+    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, 'この国の場所はまだありません'),
+  ];
+}
+// 世界地図：国ごとに、その国の場所の真ん中（中央値）に丸を置く。押した国は塗り、数が多いほど大きく。丸を押すとその国へ
+function worldMapEl(countries, counts, spots) {
+  const el = h('div', { class: 'worldmap' });
+  const pts = new Map();
+  for (const s of spots) {
+    const c = state.catalog.get(s.id);
+    if (!c || !Number.isFinite(c.lat)) continue;
+    if (!pts.has(c.country)) pts.set(c.country, []);
+    pts.get(c.country).push(c);
+  }
+  const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
+  setTimeout(() => {
+    if (!el.isConnected) return;
+    const map = makeMap(el, { center: [30, 20], zoom: 1, minZoom: 1, maxZoom: 6, zoomControl: false, attributionControl: true, worldCopyJump: true });
+    map.setView([30, 20], 1);
+    for (const country of countries) {
+      const list = pts.get(country);
+      if (!list || !list.length) continue;
+      const got = counts[country] || 0;
+      const m = L.circleMarker([median(list.map((x) => x.lat)), median(list.map((x) => x.lng))], {
+        radius: Math.min(14, 4 + Math.sqrt(list.length) * 1.2), weight: got ? 2 : 1,
+        color: got ? '#fff' : TIER_COLOR.list, fillColor: TIER_COLOR.list, fillOpacity: got ? 0.95 : 0.15,
+      }).addTo(map);
+      m.bindTooltip(`${country}${got ? `（${got}）` : ''}`, { direction: 'top' });
+      m.on('click', () => { countryDetail = country; masuDetail = null; openBook(); sheetBody.scrollTop = 0; });
+    }
+    map.invalidateSize();
+  }, 0);
+  return el;
+}
 function bookCountries() {
+  if (countryDetail) return bookCountryDetail(countryDetail);
   const spots = globalSpots();
   const counts = countriesVisited(state.visits, spots);
   const countries = countriesOf(spots).sort((a, b) => {
@@ -1321,7 +1378,8 @@ function bookCountries() {
   }).filter(Boolean);
   return [
     masuDetailPanel(),
-    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}`),
+    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}（丸を押すとその国へ）`),
+    worldMapEl(countries, counts, spots),
     ...searchBox('countrysearch', '国名・名前で探す', countryQuery, (v) => { countryQuery = v; }, () => {
       const sections = sectionsFor(normalizeName(countryQuery));
       return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')];
@@ -1779,7 +1837,7 @@ function openWelcome(done) {
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上のお題は、散歩・サイクリングでは毎日変わる「今日のお題」、旅行ではいま見頃の名所を集めた「今月のお題」です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・名勝・史跡・観光地などの名所、茶＝道の駅、緑＝近所の神社・お寺・温泉・喫茶店など。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
-      h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩は回って戻ると約4kmのお題、旅行は世界の一覧の場所だけを出します。'),
+      h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩・サイクリングは回って戻ると約30分（設定で15・60分にも）のお題、旅行は世界の見頃の名所のお題になります。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),
