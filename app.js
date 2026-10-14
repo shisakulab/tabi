@@ -163,7 +163,7 @@ async function loadCatalog() {
     const lat = Number.isFinite(s.lat) ? s.lat : c ? c.lat : null;
     const lng = Number.isFinite(s.lng) ? s.lng : c ? c.lng : null;
     return {
-      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.pref || '', country: '日本', lat, lng, tier: 'list', radius: s.radius || 50,
+      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.country ? '' : (s.pref || ''), country: s.country || '日本', lat, lng, tier: 'list', radius: s.radius || 50,
       lists: ['seasons'], seasons: [{ months: s.months, label: s.label, mark: s.mark }], note: s.note || '',
     };
   });
