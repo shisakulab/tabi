@@ -148,8 +148,9 @@ async function loadCatalog() {
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
   for (const l of lists.lists) {
-    for (const [id, name, pref, hasCoord, country] of l.items) {
-      const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, country: country || '日本', lists: [] };
+    for (const [id, name, pref, hasCoord, country, lat, lng] of l.items) {
+      // 座標も一覧に持たせる（帳面から、まだ読み込んでいない区画＝遠くや海外の場所を地図で開くため）
+      const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, country: country || '日本', lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, lists: [] };
       cur.lists.push(l.key);
       state.catalog.set(id, cur);
     }
@@ -1014,7 +1015,13 @@ function masuDetailPanel() {
     h('div', {}, h('b', {}, masuDetail.name), masuDetail.pref ? h('span', { class: 'muted' }, '　' + masuDetail.pref) : null),
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
     h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
-      hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: () => { const s = spot; masuDetail = null; closeSheet(); focusSpot(s); } }, '地図で見る') : null,
+      hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+        masuDetail = null; closeSheet();
+        // 遠くの場所は区画をまだ読んでいないので、読んでから区画の中の（半径や種類のそろった）場所を開く
+        await ensureTiles(tilesForBounds(spot.lat - 0.01, spot.lng - 0.01, spot.lat + 0.01, spot.lng + 0.01));
+        const full = spotById(spot.id);
+        focusSpot(full && Number.isFinite(full.lat) ? full : spot);
+      } }, '地図で見る') : null,
       h('button', { class: 'btn', type: 'button', onclick: () => { masuDetail = null; openBook(); } }, '閉じる')));
 }
 function barEl(count, total, color) {

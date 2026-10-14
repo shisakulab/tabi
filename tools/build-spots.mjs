@@ -475,7 +475,7 @@ async function main() {
     console.log(`${list.name}: ${items.length} 件（座標あり ${counts[list.key].withCoord}${countryNote}）`);
     listsOut.push({
       key: list.key, name: list.name, note: list.note, global: !!list.global,
-      items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0, i.country || '日本']),
+      items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0, i.country || '日本', ...(i.lat !== null ? [Math.round(i.lat * 1e5) / 1e5, Math.round(i.lng * 1e5) / 1e5] : [])]),
     });
     for (const it of items) {
       if (it.lat === null) continue;
@@ -512,7 +512,7 @@ async function main() {
     tileCounts: Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]])),
     shape: '[id, kind, name, lat, lng, tier, radius, lists, pref, country]',
   }));
-  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0), 国]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
+  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0), 国, 緯度, 経度（座標があるときだけ）]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
   await writeFile(path.join(OUT, 'lists.json'), JSON.stringify({ lists: listsOut, aliases: kokuhoAliases }));
   console.log(`地点 ${spots.size} 件、区画 ${tiles.size} 個`);
   const sc = await fetchSeasonCoords();
