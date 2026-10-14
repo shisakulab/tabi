@@ -1739,7 +1739,8 @@ function pickPhotosForImport() {
   ]);
 }
 function pickPhotoFiles() {
-  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
+  // HEIC も並べておく（image/* だけだと iPhone が JPEG に変換して渡し、そのとき撮影日時と位置を消すことがある 2026-10-14）
+  const input = h('input', { type: 'file', accept: 'image/*,image/heic,image/heif,.heic,.heif', multiple: true, hidden: true, onchange: async (e) => {
     const files = [...e.target.files];
     input.remove();
     if (files.length) await runPhotoImport(files);
@@ -1769,7 +1770,9 @@ async function runPhotoImport(files) {
   if (!matches.length) {
     // 理由が分かるように、トーストではなく画面で出す
     const lines = [];
-    if (withoutLocation) lines.push(`位置か日付が読めなかった写真：${withoutLocation}枚。写真を選ぶ画面の左下「オプション」で「位置情報」をオンにすると読めます。`);
+    const stripped = photos.filter((p) => p.sum && !p.sum.date && !p.sum.gps).length;
+    if (stripped) lines.push(`撮影日時と位置が消されて渡された写真：${stripped}枚。iPhone が写真を小さく変換して渡すときに消しています。写真を選んだあと上の「オプション」で「位置情報」をオンにし、形式があれば「現在」を選んでください。それでも消えるときは、メニューの「ファイルを選択」から選ぶと元の情報が残ります。`);
+    if (withoutLocation > stripped) lines.push(`位置か日付が読めなかった写真：${withoutLocation - stripped}枚。写真を選ぶ画面の「オプション」で「位置情報」をオンにすると読めます。`);
     if (withoutSpot) lines.push(`近くに判子の場所がなかった写真：${withoutSpot}枚。${nearest ? `いちばん近かったのは「${nearest.name}」で ${fmtDist(nearest.distance)} でした（${PHOTO_SLACK_METERS + 50}m くらいまでなら押せます）。` : ''}`);
     if (!withoutLocation && !withoutSpot) lines.push('写真の日付の判子は、もう押してありました。');
     // 写真ごとに何が読めたか（原因を調べるため。ファイル名・形式・大きさ・EXIF・日付・位置）
