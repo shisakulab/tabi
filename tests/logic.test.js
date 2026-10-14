@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -432,4 +432,45 @@ test('今日のお題の長さ：15分なら道のりも短く', () => {
   const q60 = dailyQuests(spots, '2026-10-14', 'walk', pos, none, none, 3, 60);
   assert.ok(Math.abs(q15[0].loop - 1250) <= 400, `15分 ${q15[0].loop}m`);
   assert.ok(q60[0].loop > q15[0].loop * 2, `60分 ${q60[0].loop}m`);
+});
+
+test('monthGrid: 週の始まりは日曜、7の倍数のマスになる', () => {
+  // 2026年10月1日は木曜（getDay()===4）。先頭4マスは9月の日になる
+  const g = monthGrid(2026, 10);
+  assert.equal(g.weeks[0].length, 7);
+  assert.equal(g.weeks.flat().length % 7, 0);
+  assert.deepEqual(g.weeks[0].slice(0, 4), [
+    { date: '2026-09-27', inMonth: false },
+    { date: '2026-09-28', inMonth: false },
+    { date: '2026-09-29', inMonth: false },
+    { date: '2026-09-30', inMonth: false },
+  ]);
+  assert.deepEqual(g.weeks[0][4], { date: '2026-10-01', inMonth: true });
+  const last = g.weeks.flat().at(-1);
+  assert.ok(last.date >= '2026-10-31');
+  // 月の全日が1回ずつ、ちょうど出てくる
+  const inMonthDates = g.weeks.flat().filter((c) => c.inMonth).map((c) => c.date);
+  assert.deepEqual(inMonthDates, Array.from({ length: 31 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}`));
+});
+
+test('monthGrid: うるう年の2月は29日、平年は28日', () => {
+  const leap = monthGrid(2024, 2);
+  assert.equal(leap.weeks.flat().filter((c) => c.inMonth).length, 29);
+  const normal = monthGrid(2023, 2);
+  assert.equal(normal.weeks.flat().filter((c) => c.inMonth).length, 28);
+});
+
+test('monthGrid: 1月は前年12月の日を、12月は翌年1月の日をまたぐ', () => {
+  const jan = monthGrid(2026, 1);
+  const firstOut = jan.weeks[0][0];
+  if (!firstOut.inMonth) assert.ok(firstOut.date.startsWith('2025-12'));
+  const dec = monthGrid(2026, 12);
+  const lastOut = dec.weeks.at(-1).at(-1);
+  if (!lastOut.inMonth) assert.ok(lastOut.date.startsWith('2027-01'));
+});
+
+test('shiftMonth: 年をまたぐ', () => {
+  assert.deepEqual(shiftMonth(2026, 1, -1), { year: 2025, month: 12 });
+  assert.deepEqual(shiftMonth(2026, 12, 1), { year: 2027, month: 1 });
+  assert.deepEqual(shiftMonth(2026, 10, 1), { year: 2026, month: 11 });
 });

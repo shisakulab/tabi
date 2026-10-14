@@ -340,6 +340,29 @@ export function prefsVisited(visits, seals, meals, spots) {
   return out;
 }
 
+// ---------- 日記（カレンダー） ----------
+// year・month（1〜12）の月を1つ進める／戻す。年をまたぐ分は Date に任せる
+export function shiftMonth(year, month, delta) {
+  const d = new Date(year, month - 1 + delta, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}
+
+// 月のカレンダーのマス。日曜始まりで、前後の月の日も7の倍数になるまで埋める。
+// weeks は7日ずつの配列。各マスは { date: 'YYYY-MM-DD', inMonth }
+export function monthGrid(year, month) {
+  const first = new Date(year, month - 1, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const toDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const cells = [];
+  for (let i = startDow; i > 0; i--) cells.push({ date: toDate(new Date(year, month - 1, 1 - i)), inMonth: false });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ date: toDate(new Date(year, month - 1, d)), inMonth: true });
+  for (let i = 1; cells.length % 7 !== 0; i++) cells.push({ date: toDate(new Date(year, month - 1, daysInMonth + i)), inMonth: false });
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return { year, month, weeks };
+}
+
 // ---------- 日記・書き出し ----------
 // 日付ごとにまとめて新しい日から。visits は at（ミリ秒）、seals・meals は at（'YYYY-MM-DD'）の日
 export function groupByDay(visits, seals, meals = []) {
