@@ -988,7 +988,7 @@ function openBook() {
   showSheet(openBook, [
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
       class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button',
-      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; openBook(); },
+      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; prefDetail = null; openBook(); },
     }, label))),
     body,
   ]);
@@ -1238,7 +1238,38 @@ function openMealRecord(food) {
     save)]);
 }
 
+// 都道府県のマスを押すと、その県の名所（一覧ごと）とご当地グルメを出す
+let prefDetail = null;
+function bookPrefDetail(pref) {
+  const spots = allListSpots();
+  const sections = state.lists.map((l) => {
+    const p = listProgress(state.visits, spots, l.key);
+    const cells = p.cells.filter((c) => c.pref === pref);
+    if (!cells.length) return null;
+    const isSeason = l.key === 'seasons';
+    const color = isSeason ? 'var(--seal)' : TIER_COLOR.list;
+    const got = cells.filter((c) => c.got).length;
+    return h('details', { class: 'listgroup' + (got ? ' got' : ''), open: cells.length <= FOLD_OVER },
+      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, `${got} / ${cells.length}`)),
+      h('div', { class: 'masus' }, cells.map((c) => masuCell(c, color, isSeason))));
+  }).filter(Boolean);
+  const foods = state.foods.filter((f) => f.pref === pref);
+  const foodGot = foods.filter((f) => mealsFor(f).length > 0).length;
+  if (foods.length) {
+    sections.push(h('details', { class: 'listgroup' + (foodGot ? ' got' : ''), open: true },
+      h('summary', {}, h('b', {}, 'ご当地グルメ'), h('span', { class: 'n' }, `${foodGot} / ${foods.length}`)),
+      h('div', { class: 'masus' }, foods.map(foodMasu))));
+  }
+  return [
+    masuDetailPanel(),
+    h('div', { style: 'display:flex;gap:8px;align-items:center;margin:0 0 8px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { prefDetail = null; masuDetail = null; openBook(); } }, '‹ 都道府県'),
+      h('h3', { style: 'margin:0;font-size:20px' }, pref)),
+    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, 'この県の場所はまだありません'),
+  ];
+}
 function bookPrefs() {
+  if (prefDetail) return bookPrefDetail(prefDetail);
   const counts = prefsVisited(state.visits, state.seals, state.meals, allListSpots());
   const byPos = new Map(PREFS.map((p) => [`${p.row}_${p.col}`, p]));
   const cells = [];
@@ -1246,7 +1277,7 @@ function bookPrefs() {
     for (let c = 0; c < 10; c++) {
       const p = byPos.get(`${r}_${c}`);
       cells.push(p
-        ? h('div', { class: 'pref' + (counts[p.name] ? ' got' : ''), title: p.name }, h('span', {}, p.name.replace(/[都道府県]$/, '') || p.name), counts[p.name] ? h('b', {}, counts[p.name]) : null)
+        ? h('button', { type: 'button', class: 'pref' + (counts[p.name] ? ' got' : ''), title: p.name, onclick: () => { prefDetail = p.name; masuDetail = null; openBook(); sheetBody.scrollTop = 0; } }, h('span', {}, p.name.replace(/[都道府県]$/, '') || p.name), counts[p.name] ? h('b', {}, counts[p.name]) : null)
         : h('div', {}));
     }
   }
