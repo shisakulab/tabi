@@ -1143,11 +1143,24 @@ function bookFoods() {
     const ai = PREF_ORDER.indexOf(a.pref); const bi = PREF_ORDER.indexOf(b.pref);
     return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
   });
+  // 都道府県ごとに見出しを付けて分ける（北から順）。検索中は当てはまる県だけ開いて出す
+  const byPref = (foods, open) => {
+    const groups = new Map();
+    for (const f of foods) { if (!groups.has(f.pref)) groups.set(f.pref, []); groups.get(f.pref).push(f); }
+    const prefs = [...groups.keys()].sort((a, b) => { const ai = PREF_ORDER.indexOf(a); const bi = PREF_ORDER.indexOf(b); return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi); });
+    return h('div', { class: 'listgroups' }, prefs.map((pref) => {
+      const list = groups.get(pref);
+      const got = list.filter((f) => mealsFor(f).length > 0).length;
+      return h('details', { class: 'listgroup' + (got ? ' got' : ''), open },
+        h('summary', {}, h('b', {}, pref || 'その他'), h('span', { class: 'n' }, `${got} / ${list.length}`)),
+        h('div', { class: 'masus' }, list.map(foodMasu)));
+    }));
+  };
   const results = () => {
     const q = normalizeName(foodQuery);
-    if (!q) return [h('div', { class: 'masus' }, ordered.map(foodMasu))];
+    if (!q) return [byPref(ordered, true)];
     const matches = state.foods.filter((f) => [f.name, f.kana, f.pref, ...(f.aliases || [])].some((w) => normalizeName(w).includes(q)));
-    return [matches.length ? h('div', { class: 'masus' }, matches.map(foodMasu)) : h('p', { class: 'muted' }, '見つかりませんでした')];
+    return [matches.length ? byPref(matches, true) : h('p', { class: 'muted' }, '見つかりませんでした')];
   };
   return [head, barEl(gotMains.length, mains.length, FOOD_COLOR), ...searchBox('foodsearch', '料理名・都道府県名で探す', foodQuery, (v) => { foodQuery = v; }, results)];
 }
