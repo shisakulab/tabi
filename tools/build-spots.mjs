@@ -19,6 +19,20 @@ const HEADERS = {
 };
 const refresh = process.argv.includes('--refresh');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// tools/fill-coords.mjs が Wikidata の P625 以外（子の平均・Nominatim）で見つけた座標の上書き表。
+// ここで再構築しても同じ座標になるよう、P625 などで見つからなかった item にだけ当てる
+const OVERRIDES_FILE = path.join(root, 'tools', 'out', 'fill-coords-cache.json');
+async function loadOverrides() {
+  try { return JSON.parse(await readFile(OVERRIDES_FILE, 'utf8')).found || {}; } catch { return {}; }
+}
+function applyOverrides(items, overrides) {
+  for (const it of items) {
+    if (it.lat !== null) continue;
+    const o = overrides[it.id];
+    if (o) { it.lat = o.lat; it.lng = o.lng; }
+  }
+  return items;
+}
 
 // 一覧の定義。cond は ?s の絞り込み
 // tier は 'list'（一覧に入っている場所。車・電車でも出す）か 'near'（近所の場所。徒歩・自転車のときだけ出す）
@@ -458,9 +472,10 @@ async function main() {
   const listsOut = [];
   const counts = {};
   const gsiCache = await loadGsiCache();
+  const overrides = await loadOverrides();
   let kokuhoAliases = {};
   for (const list of LISTS) {
-    let items = await fetchList(list, gsiCache);
+    let items = applyOverrides(await fetchList(list, gsiCache), overrides);
     if (list.key === 'kokuho') {
       const before = items.length;
       const grouped = await fetchKokuhoGroups(items);
