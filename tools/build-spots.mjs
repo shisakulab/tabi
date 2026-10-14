@@ -22,10 +22,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // tools/fill-coords.mjs が Wikidata の P625 以外（子の平均・Nominatim）で見つけた座標の上書き表。
 // ここで再構築しても同じ座標になるよう、P625 などで見つからなかった item にだけ当てる
 const OVERRIDES_FILE = path.join(root, 'tools', 'out', 'fill-coords-cache.json');
-async function loadOverrides() {
+export async function loadOverrides() {
   try { return JSON.parse(await readFile(OVERRIDES_FILE, 'utf8')).found || {}; } catch { return {}; }
 }
-function applyOverrides(items, overrides) {
+export function applyOverrides(items, overrides) {
   for (const it of items) {
     if (it.lat !== null) continue;
     const o = overrides[it.id];
@@ -36,12 +36,15 @@ function applyOverrides(items, overrides) {
 
 // 一覧の定義。cond は ?s の絞り込み
 // tier は 'list'（一覧に入っている場所。車・電車でも出す）か 'near'（近所の場所。徒歩・自転車のときだけ出す）
-const LISTS = [
+export const LISTS = [
   // 世界遺産は世界分（2026-10-14 に日本の絞りを外した）。他の一覧は日本のまま
   { key: 'heritage', name: '世界遺産', note: '世界遺産の構成資産', radius: 500, global: true, cond: '?s wdt:P757 [] .' },
   { key: 'judenken', name: '重伝建', note: '重要伝統的建造物群保存地区', radius: 300, cond: '?s wdt:P1435 wd:Q850649 .' },
   { key: 'meijo100', name: '日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q1139439 .' },
   { key: 'zokumeijo', name: '続日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q30927700 .' },
+  // 深田久弥『日本百名山』(Q1156761)。八経ヶ岳(Q11391726)は大峰山の最高峰で別立てされているが、
+  // 深田の選には大峰山として入っているので除く（これを除くとちょうど100件になる）
+  { key: 'hyakumeizan', name: '日本百名山', note: '深田久弥『日本百名山』の100座。山頂（半径500m）で判子', radius: 500, cond: '?s wdt:P361 wd:Q1156761 . FILTER (?s != wd:Q11391726)' },
   { key: 'meisui', name: '名水百選', note: '環境省選定', radius: 50, cond: '?s wdt:P361 wd:Q10917783 .' },
   { key: 'taki100', name: '日本の滝百選', note: '1990年選定', radius: 150, cond: '?s wdt:P361 wd:Q40172600 .' },
   // 国宝は美術工芸品も含む。美術品は所蔵館の位置で登録されていて1か所に何十件も重なるので、
@@ -182,7 +185,7 @@ function parsePoint(v) {
 
 // 都道府県が Wikidata で取れない item を座標から補う（国土地理院の逆ジオコーダ）。結果は id → 都道府県（取れなければ空）でキャッシュ
 const GSI_CACHE_FILE = path.join(CACHE, 'gsi-pref.json');
-async function loadGsiCache() {
+export async function loadGsiCache() {
   try { return JSON.parse(await readFile(GSI_CACHE_FILE, 'utf8')); } catch { return {}; }
 }
 async function gsiPrefFor(id, lat, lng, cache) {
@@ -291,7 +294,7 @@ async function fetchGlobalList(list) {
 }
 
 // 1つの一覧を取る：[{ id, name, lat, lng, pref, country }]（id 重複は1つに）。日本の一覧は country を固定で '日本' にする
-async function fetchList(list, gsiCache) {
+export async function fetchList(list, gsiCache) {
   if (list.global) return fetchGlobalList(list);
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }
@@ -534,4 +537,5 @@ async function main() {
   console.log('季節の名所の座標: ' + sc.got + ' / ' + sc.total);
   if (sc.missing.length) console.log(['座標を取れなかった名所:', ...sc.missing].join('\n  '));
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// このファイルを直接実行したときだけ走る（tools/add-list.mjs のように LISTS・fetchList だけ import するときは走らせない）
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch((e) => { console.error(e); process.exit(1); });
