@@ -153,6 +153,25 @@ export function seasonOf(spot, date) {
   return spot.seasons.find((s) => (s.months || []).includes(m)) || null;
 }
 
+// 月の一覧（1〜12、順不同でも可）を「4〜6月・10〜11月」のように、連続した月を「〜」でまとめて表す。
+// 12→1月のように年をまたいで連続する分も1つにまとめる（例：[12,1,2] → "12〜2月"）
+export function formatBestMonths(months) {
+  const sorted = [...new Set(months)].sort((a, b) => a - b);
+  if (!sorted.length) return '';
+  const runs = [];
+  let start = sorted[0], end = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    const m = sorted[i];
+    if (m === end + 1) { end = m; continue; }
+    runs.push([start, end]); start = m; end = m;
+  }
+  runs.push([start, end]);
+  if (runs.length > 1 && runs[0][0] === 1 && runs[runs.length - 1][1] === 12) {
+    runs[0][0] = runs.pop()[0];
+  }
+  return runs.map(([a, b]) => (a === b ? `${a}月` : `${a}〜${b}月`)).join('・');
+}
+
 // 今月のお題：今月が見頃の場所を最大 limit か所。位置があれば旅のしかたの範囲の中を近い順に、足りなければ範囲の外を近い順に足す。
 // 位置がなければ、旅のしかたの格に合う場所を全国から、日付で並びをずらして選ぶ
 export function monthlyQuests(spots, date, mode, pos, limit = 5) {

@@ -1,4 +1,8 @@
 tools/.cache/
+tools/out/climate-power-cache.json
+tools/out/climate-cache.json
+tools/out/build-climate.log
+.claude/
 .DS_Store
 Thumbs.db
 desktop.ini

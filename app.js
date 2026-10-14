@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -27,7 +27,7 @@ const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); co
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
 const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate'); const settingsEl = $('settings');
 
-const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], foods: [], tab: 'spots', fixes: [] };
+const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], foods: [], tab: 'spots', fixes: [], climate: null };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 動作確認用：?date=2026-11-12 で今日の日付を差し替える
@@ -155,10 +155,12 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods] = await Promise.all([
+  const [lists, coords, meta, foods, climate] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
+    fetchJson('data/climate.json', { spots: {} }),
   ]);
   state.foods = foods;
+  state.climate = climate;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
   for (const l of lists.lists) {
@@ -607,6 +609,7 @@ function showCard(spot) {
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
       spot.pref ? ` ${spot.pref}` : '', dist !== null ? `　${fmtDist(dist)}` : ''),
     spot.note ? h('p', { style: 'margin:4px 0' }, spot.note) : null,
+    bestMonthsOf(spot) ? h('p', { class: 'muted', style: 'margin:4px 0' }, `ベストシーズン ${formatBestMonths(bestMonthsOf(spot))}`) : null,
     season ? h('p', { class: 'muted', style: 'margin:4px 0' }, `いまは見頃（${season.label}）。ここで押すと季節の判子です。`) : null,
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
@@ -631,6 +634,14 @@ function gmapUrl(spot, route) {
 function spotTags(spot) {
   if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
   return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
+}
+
+// 世界遺産のベストシーズン（気候から行きやすい月。出典 NASA POWER）。世界遺産でないか、気候データがなければ null
+function bestMonthsOf(spot) {
+  if (!state.climate || !(spot.lists || []).includes('heritage')) return null;
+  const key = state.climate.spots[spot.id];
+  const grid = key && state.climate[key];
+  return grid && grid.best && grid.best.length ? grid.best : null;
 }
 
 function setPosDot(pos) {
@@ -1408,6 +1419,18 @@ function globalSpots() {
 let countryQuery = '';
 // 国を押すと、その国の場所を出す（都道府県と同じ形）
 let countryDetail = null;
+// その国の世界遺産のベストシーズン（気候から行きやすい月。出典 NASA POWER）。無ければ null
+function countryBestMonths(spots, country) {
+  if (!state.climate) return null;
+  const cells = listProgress(state.visits, spots, 'heritage').cells.filter((c) => (state.catalog.get(c.id) || {}).country === country);
+  const months = new Set();
+  for (const c of cells) {
+    const key = state.climate.spots[c.id];
+    const grid = key && state.climate[key];
+    if (grid && grid.best) grid.best.forEach((m) => months.add(m));
+  }
+  return months.size ? formatBestMonths([...months]) : null;
+}
 function bookCountryDetail(country) {
   const spots = globalSpots();
   const sections = state.lists.filter((l) => l.global).map((l) => {
@@ -1418,11 +1441,13 @@ function bookCountryDetail(country) {
       h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, `${got} / ${cells.length}`)),
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
   }).filter(Boolean);
+  const best = countryBestMonths(spots, country);
   return [
     masuDetailPanel(),
     h('div', { style: 'display:flex;gap:8px;align-items:center;margin:0 0 8px' },
       h('button', { class: 'btn', type: 'button', onclick: () => { countryDetail = null; masuDetail = null; openBook(); } }, '‹ 国'),
       h('h3', { style: 'margin:0;font-size:20px' }, country)),
+    best ? h('p', { class: 'muted', style: 'margin:0 0 8px' }, `世界遺産のベストシーズン ${best}`) : null,
     sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, 'この国の場所はまだありません'),
   ];
 }

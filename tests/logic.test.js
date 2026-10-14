@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -78,6 +78,13 @@ test('monthlyQuests: 旅のしかたの範囲の外は出さない', () => {
   assert.deepEqual(ids('bike'), ['near']);
   assert.deepEqual(ids('trip'), ['near', 'mid', 'far']);
   assert.deepEqual(ids('walk'), []);
+});
+
+test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {
+  assert.equal(formatBestMonths([4, 5, 6, 10, 11]), '4〜6月・10〜11月');
+  assert.equal(formatBestMonths([5]), '5月');
+  assert.equal(formatBestMonths([1, 2, 11, 12]), '11〜2月');
+  assert.equal(formatBestMonths([]), '');
 });
 
 test('themes/seasons: 形', () => {
