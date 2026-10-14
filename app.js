@@ -1130,7 +1130,7 @@ function foodMasu(f) {
   const got = mealsFor(f).length > 0;
   return h('button', {
     class: 'masu' + (got ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: `${f.name}（${f.pref}）`,
-    onclick: () => openFoodSheet(f),
+    onclick: () => { bookScroll = sheetBody.scrollTop; openFoodSheet(f); },
   }, glyphOf(f.name));
 }
 let foodQuery = '';
@@ -1179,15 +1179,21 @@ async function deleteMeal(m) {
   await loadData();
   openFoodSheet(state.foods.find((f) => f.key === m.itemKey));
 }
+// 帳面から開いた詳細は「帳面に戻る」で、同じタブ・同じスクロール位置へ戻す
+let bookScroll = 0;
+function backToBook() { openBook(); sheetBody.scrollTop = bookScroll; }
+const backBtn = (onclick, label = '‹ 帳面に戻る') => h('button', { class: 'btn', type: 'button', onclick }, label);
 function openFoodSheet(food) {
   if (!food) { closeSheet(); return; }
   const records = mealsFor(food).sort((a, b) => (a.at < b.at ? 1 : -1));
   showSheet(() => openFoodSheet(food), [
+    h('div', { style: 'display:flex;gap:8px;margin:0 0 10px' },
+      backBtn(backToBook),
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => openMealRecord(food) }, '食べた')),
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, food.name),
     h('p', { class: 'sub', style: 'margin:0 0 8px' }, food.pref),
     h('p', {}, food.summary),
-    h('p', { class: 'muted' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
-    h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin:8px 0 14px', onclick: () => openMealRecord(food) }, '食べた'),
+    h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
     records.length ? h('div', { class: 'list' }, records.map(foodRecordRow)) : h('p', { class: 'muted' }, 'まだ記録がありません。'),
   ]);
 }
@@ -1213,6 +1219,7 @@ function openMealRecord(food) {
     } catch (err) { save.disabled = false; toast('保存できませんでした：' + (err && err.message ? err.message : err)); }
   } }, '記録する');
   showSheet(null, [h('div', { class: 'form' },
+    h('div', {}, backBtn(() => openFoodSheet(food), '‹ 戻る')),
     h('h2', { style: 'font-size:20px' }, food.name),
     h('p', { class: 'sub', style: 'margin:0' }, food.pref),
     h('label', { class: 'f' }, '日付', date),
