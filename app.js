@@ -1865,7 +1865,7 @@ function openImportAsk(done) {
   showSheet(null, [
     h('h2', { style: 'font-size:22px;margin:4px 0 8px;text-align:center' }, 'これまでの旅も判子にしますか？'),
     h('p', { class: 'sub', style: 'margin:0 0 10px' }, 'スマホの写真の撮影場所と日付から、行った場所にまとめて判子を押します。確かめる画面はなく、あとで「まとめて取り消す」で外せます。写真は端末の外に送りません。'),
-    h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次の画面で、旅の写真をまとめて選んでください（多いほど判子が増えます）。'),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次に出るメニューで「写真ライブラリ」を選び、旅の写真を指でなぞってまとめて選んで「追加」を押してください（多いほど判子が増えます）。読むのは撮影日と撮影場所だけです。'),
     h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickPhotosForImport) }, '写真から判子を押す'),
     h('button', { class: 'btn', type: 'button', style: 'width:100%', onclick: () => go(null) }, 'あとで（設定の歯車からいつでも）'),
   ], () => sheetEl.classList.add('small'));
