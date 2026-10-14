@@ -502,6 +502,7 @@ function showCard(spot) {
   const dist = pos ? distanceMeters(pos, spot) : null;
   const mine = visitsOf(spot.id);
   card = h('div', { class: 'spotcard' },
+    h('button', { class: 'cardx', type: 'button', 'aria-label': '閉じる', onclick: closeCard }, '×'),
     h('h3', {}, spot.name),
     h('p', { class: 'sub', style: 'margin:2px 0 6px' },
       spotTags(spot).map((t) => h('span', { class: 'tag t-' + spot.tier }, t)),
@@ -511,8 +512,7 @@ function showCard(spot) {
     season ? h('p', { class: 'muted', style: 'margin:4px 0' }, `いまは見頃（${season.label}）。ここで押すと季節の判子です。`) : null,
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => stamp(spot) }, '判子を押す'),
-      h('button', { class: 'btn', type: 'button', onclick: closeCard }, '閉じる')),
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す')),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('a', { class: 'btn', href: gmapUrl(spot), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, 'Googleマップで開く'),
       h('a', { class: 'btn', href: gmapUrl(spot, true), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, '経路')));
