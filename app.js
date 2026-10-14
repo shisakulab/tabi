@@ -768,7 +768,10 @@ function drawQuest() {
       h('span', { class: 'muted' }, state.dailyLoop ? `回って戻ると${loopText(state.dailyLoop).split('・')[0]}` : qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
       qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null),
     qs.length
-      ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : '') },
+      // 枠を押すとお題の一覧、1つの場所の札を押すとその場所のカード（お題の枠はボタンなので、札は div で受けて一覧を開かないようにする）
+      ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : ''), role: 'button', tabindex: '0', 'aria-label': `${s.name}を地図で見る`,
+        onclick: (e) => { e.stopPropagation(); focusSpot(s); },
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); focusSpot(s); } } },
         h('span', { class: 'qm' + (s.daily ? ' daily' : '') }, questMark(s)),
         h('span', { class: 'qn' }, s.name),
         s.distance !== null ? h('span', { class: 'qd' }, fmtDist(s.distance)) : null)))
