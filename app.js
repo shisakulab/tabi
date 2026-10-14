@@ -1769,7 +1769,9 @@ async function runPhotoImport(files) {
   const spots = await spotsAround(photos, 0.03);
   const { matches, withoutLocation, withoutSpot, nearest } = matchPhotoStamps(photos, spots, state.visits);
   aiPending = photos.filter((p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng));
-  if (!matches.length) {
+  // 設定に API キーがあれば、位置のない写真もこのまま Claude で推定して判子まで付ける（2026-10-14：写真を選ぶだけでよいように）
+  const useAi = !!aiKey() && aiPending.length > 0;
+  if (!matches.length && !useAi) {
     // 理由が分かるように、トーストではなく画面で出す
     const lines = [];
     const stripped = photos.filter((p) => p.sum && !p.sum.date && !p.sum.gps).length;
@@ -1785,7 +1787,7 @@ async function runPhotoImport(files) {
       h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '判子は付きませんでした'),
       ...lines.map((t) => h('p', { class: 'sub', style: 'margin:0 0 8px' }, t)),
       detail,
-      aiButton(),
+      aiHint(),
       h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:6px', onclick: closeSheet }, '閉じる'),
     ], () => sheetEl.classList.add('small'));
     return;
@@ -1799,9 +1801,27 @@ async function runPhotoImport(files) {
     await stampWithPhoto(spot, m.date, photos[m.photoIndex].file, importId, 'photo', blobCache, m.photoIndex);
     placeSet.add(spot.id);
   }
+  if (!useAi) {
+    await loadData();
+    render();
+    showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+    return;
+  }
+  const groups = aiGroups(aiPending);
+  aiPending = [];
+  const ai = await aiLocate(groups, importId, blobCache);
   await loadData();
   render();
-  showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+  const total = placeSet.size + ai.stamped;
+  toast(`${files.length}枚から${total}か所に判子。`);
+  showSheet(null, [
+    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '写真から判子'),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, `${files.length}枚から${total}か所に判子を付けました（写真の位置から ${placeSet.size}か所、位置のない写真を Claude で推定して ${ai.stamped}か所。Claude には${ai.asked}回たずねました${ai.failed ? `、エラー ${ai.failed}回` : ''}）。日付が残っていない写真は、ファイルの日時を使っています。`),
+    ai.lines.length ? h('ul', { class: 'muted', style: 'font-size:12px;padding-left:18px;margin:0 0 10px;word-break:break-all' }, ai.lines.slice(0, 40).map((t) => h('li', {}, t))) : null,
+    h('div', { style: 'display:flex;gap:8px;justify-content:center' },
+      total ? h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す') : null,
+      h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
+  ]);
 }
 
 // 写真つきの判子を1つ押す（判子＋写真・メモの印）。blobCache は同じ写真を何度も縮めないため
@@ -1839,55 +1859,45 @@ function aiGroups(photos) {
   }
   return groups;
 }
-function aiButton() {
-  if (!aiKey() || !aiPending.length) return null;
-  const groups = aiGroups(aiPending);
-  const m = AI_MODELS_LIST.find((x) => x.id === aiModel()) || AI_MODELS_LIST[0];
-  const yen = Math.max(1, Math.round(groups.length * m.yen));
-  return h('button', { class: 'btn', type: 'button', style: 'width:100%;margin:0 0 8px', onclick: () => { closeSheet(); runAiLocate(groups); } },
-    `位置のない写真 ${aiPending.length}枚を Claude で推定（${groups.length}回・約${yen}円）`);
+// キーがなくて位置のない写真があったとき：推定できることと、設定への入り口を出す
+function aiHint() {
+  if (aiKey() || !aiPending.length) return null;
+  return h('div', { style: 'margin:0 0 8px' },
+    h('p', { class: 'muted', style: 'margin:0 0 6px' }, `位置のない写真が ${aiPending.length}枚ありました。設定に自分の Claude API キーを入れると、写真から場所を推定して判子を付けられます。`),
+    h('button', { class: 'btn', type: 'button', style: 'width:100%', onclick: () => { closeSheet(); openSettings(); } }, '設定を開く'));
 }
-async function runAiLocate(groups) {
+// 位置のない写真を Claude で推定して判子を押す。返り値 { stamped, asked, failed, lines }
+async function aiLocate(groups, importId, blobCache) {
+  const out = { stamped: 0, asked: 0, failed: 0, lines: [] };
   let mod;
-  try { mod = await import('./ai-locate.js'); } catch { toast('推定の部品を読み込めませんでした（通信を確かめてください）'); return; }
-  const importId = db.newId();
-  const blobCache = new Map();
-  const placeSet = new Set(); const lines = [];
-  let done = 0; let failed = 0;
+  try { mod = await import('./ai-locate.js'); } catch { out.lines.push('推定の部品を読み込めませんでした（通信を確かめてください）'); return out; }
+  const placeSet = new Set();
   for (const g of groups) {
-    toast(`Claude で推定しています… ${++done}/${groups.length}`);
+    toast(`位置のない写真を Claude で推定しています… ${++out.asked}/${groups.length}`);
+    const name = g.rep.file.name + (g.members.length > 1 ? `（ほか${g.members.length - 1}枚）` : '');
     let guess = null;
     try {
       const jpeg = await resizePhotoTo(g.rep.file, mod.AI_IMAGE_MAX);
       guess = await mod.locatePhoto({ apiKey: aiKey(), model: aiModel(), jpeg });
     } catch (e) {
-      failed++;
+      out.failed++;
       const msg = String((e && (e.status ? `${e.status} ${e.message}` : e.message)) || e);
-      lines.push(`${g.rep.file.name}：エラー（${msg.slice(0, 80)}）`);
-      if (e && (e.status === 401 || e.status === 403)) break; // キーが違えば続けても同じ
+      out.lines.push(`${name}：エラー（${msg.slice(0, 80)}）`);
+      if (e && (e.status === 401 || e.status === 403)) { out.lines.push('API キーが使えませんでした。設定のキーを確かめてください'); break; } // キーが違えば続けても同じ
       continue;
     }
-    if (!guess || !guess.found) { lines.push(`${g.rep.file.name}：場所は分かりませんでした${guess && guess.reason ? `（${guess.reason}）` : ''}`); continue; }
+    if (!guess || !guess.found) { out.lines.push(`${name}：場所は分かりませんでした${guess && guess.reason ? `（${guess.reason}）` : ''}`); continue; }
     const spots = await spotsAround([{ lat: Number(guess.lat), lng: Number(guess.lng) }], 0.3);
     const spot = pickGuessedSpot(guess, spots);
     const date = g.rep.date || todayStr(new Date(g.rep.file.lastModified || Date.now()));
-    if (!spot) { lines.push(`${g.rep.file.name}：「${guess.place_name}」（${guess.confidence}）と推定。近くに判子の場所はありませんでした`); continue; }
-    if (stampedOn(state.visits, spot.id, new Date(`${date}T12:00:00`)) || placeSet.has(`${spot.id}_${date}`)) { lines.push(`${g.rep.file.name}：「${spot.name}」はその日もう押してありました`); continue; }
+    if (!spot) { out.lines.push(`${name}：「${guess.place_name}」（${guess.confidence}）と推定。近くに判子の場所はありませんでした`); continue; }
+    if (stampedOn(state.visits, spot.id, new Date(`${date}T12:00:00`)) || placeSet.has(`${spot.id}_${date}`)) { out.lines.push(`${name}：「${spot.name}」はその日もう押してありました`); continue; }
     await stampWithPhoto(spot, date, g.rep.file, importId, 'ai', blobCache, g.rep.file);
     placeSet.add(`${spot.id}_${date}`);
-    lines.push(`${g.rep.file.name}：「${spot.name}」（${date}・${guess.reason}）`);
+    out.stamped++;
+    out.lines.push(`${name}：「${spot.name}」（${date}・${guess.reason}）`);
   }
-  aiPending = [];
-  await loadData();
-  render();
-  showSheet(null, [
-    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, 'Claude で推定'),
-    h('p', { class: 'sub', style: 'margin:0 0 8px' }, `${groups.length}回たずねて、${placeSet.size}か所に判子を付けました。${failed ? `（エラー ${failed}回）` : ''}日付が写真に残っていないものは、ファイルの日時を使っています。`),
-    h('ul', { class: 'muted', style: 'font-size:12px;padding-left:18px;margin:0 0 10px;word-break:break-all' }, lines.slice(0, 40).map((t) => h('li', {}, t))),
-    h('div', { style: 'display:flex;gap:8px;justify-content:center' },
-      placeSet.size ? h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す') : null,
-      h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
-  ]);
+  return out;
 }
 // 長い辺を max px にした JPEG（推定に送る用。保存用の resizePhoto とは大きさを分ける）
 async function resizePhotoTo(file, max) {
@@ -1935,7 +1945,7 @@ function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, 
     withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
     withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
   ].filter(Boolean).join('・');
-  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId, aiButton());
+  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId, aiHint());
 }
 
 function showImportSheet(title, text, importId, extra = null) {
