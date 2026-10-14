@@ -9,6 +9,7 @@
   --day: #1f7a8c;
   --list: #2b4c7e;
   --near: #7a8f5b;
+  --road: #9a6b2f;
   --seal: #b8423a;
   --serif: "Hiragino Mincho ProN", "Yu Mincho", serif;
   --safe-b: env(safe-area-inset-bottom, 0px);
@@ -113,6 +114,12 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .legend .ring { width: 8px; height: 8px; background: none; border: 1.5px solid var(--ink2); }
 .legend .ring.dash { border-style: dashed; }
 .legend .ring.fill { background: var(--ink2); }
+/* 「押した」は文字入りの小さな判子（地図の判子と同じかすれ） */
+.legend .minihanko {
+  display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 4px; vertical-align: -3px;
+  border-radius: 50%; background: var(--seal); color: #fff; font: 900 9px/1 var(--serif);
+  -webkit-mask-image: var(--kasure); mask-image: var(--kasure); -webkit-mask-size: 32px 32px; mask-size: 32px 32px;
+}
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 4px; vertical-align: -1px; }
 /* 季節の名所：四角い判子で区別する */
 .hanko.season.empty { border-radius: 6px; border-color: var(--seal); transform: rotate(-6deg); }
@@ -178,7 +185,7 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 }
 .locate.on { background: var(--accent); border-color: #fff; color: #fff; }
 @media (max-width: 400px) {
-  .fab { gap: 12px; padding-right: 40px; }
+  .fab { gap: 12px; padding: 0 52px; } /* 右下の現在地ボタンを避けつつ、左右同じ余白で真ん中にそろえる */
   .rbtn { width: 50px; height: 50px; font-size: 13px; }
   .rbtn.main { width: 64px; height: 64px; }
   .locate { right: 8px; width: 44px; height: 44px; }

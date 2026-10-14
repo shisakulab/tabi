@@ -34,6 +34,10 @@ const LISTS = [
   { key: 'kokuho', name: '国宝', note: '国宝の建造物（同じ寺社・城の建物は1つにまとめる）', radius: 150,
     cond: '?s wdt:P1435 wd:Q1139795 ; wdt:P625 [] . FILTER NOT EXISTS { ?s wdt:P195 [] } FILTER NOT EXISTS { ?s wdt:P276 ?m . ?m wdt:P31/wdt:P279? wd:Q33506 }' },
   { key: 'ichinomiya', name: '一宮', note: '各国の一宮（諸説あるものを含む）', radius: 150, cond: '?s wdt:P13723 wd:Q1656379 ; wdt:P625 [] .' },
+  // 観光地らしい場所（2026-10-14 追加：名所が少ない、観光地を出してほしい、という要望）
+  { key: 'meisho', name: '名勝', note: '国の名勝・特別名勝', radius: 300, cond: 'VALUES ?d { wd:Q11414752 wd:Q94987823 } ?s wdt:P1435 ?d ; wdt:P17 wd:Q17 .' },
+  { key: 'shiseki', name: '史跡', note: '国の史跡・特別史跡', radius: 200, cond: 'VALUES ?d { wd:Q30834580 wd:Q26764449 } ?s wdt:P1435 ?d ; wdt:P17 wd:Q17 .' },
+  { key: 'kanko', name: '観光地', note: 'Wikidata で観光地とされている場所', radius: 300, cond: '?s wdt:P31/wdt:P279* wd:Q570116 ; wdt:P17 wd:Q17 .' },
   { key: 'michinoeki', name: '道の駅', note: '国土交通省登録', radius: 150, cond: '?s wdt:P31 wd:Q1187691 .' },
 ];
 
