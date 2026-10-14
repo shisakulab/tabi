@@ -698,3 +698,57 @@ export function gpxDayDistances(points) {
   }
   return days;
 }
+
+// 経路（GPX）の点（{ lat, lng, time }）から、立ち寄った場所と通っただけの場所を分ける。
+// 立ち寄り＝半径 stopMeters の中に dwellMs 以上とどまった地点。その地点が判子の範囲に入る場所は stamps（その日）。
+// 範囲に入っただけの場所は passed（大きな公園や城跡を歩いて通り抜けただけでは押さない）。点の間が maxGapMs より空いたら、とどまったとは数えない
+export const GPX_STOP_METERS = 100;
+export function matchGpxVisits(points, spots, visits, dwellMs = AUTO_DWELL_MS, stopMeters = GPX_STOP_METERS, maxGapMs = 600000) {
+  const pts = (points || []).filter((p) => Number.isFinite(p.time) && Number.isFinite(p.lat) && Number.isFinite(p.lng)).sort((a, b) => a.time - b.time);
+  // 場所を 0.01 度の格子に入れて、点ごとに近くの場所だけ見る
+  const CELL = 0.01;
+  const grid = new Map();
+  const cellKey = (lat, lng) => `${Math.floor(lat / CELL)}_${Math.floor(lng / CELL)}`;
+  for (const s of spots) {
+    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) continue;
+    const k = cellKey(s.lat, s.lng);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(s);
+  }
+  const near = (p) => {
+    const i = Math.floor(p.lat / CELL); const j = Math.floor(p.lng / CELL);
+    const out = [];
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) { const g = grid.get(`${i + di}_${j + dj}`); if (g) out.push(...g); }
+    return out;
+  };
+  // とどまった地点を探す
+  const stops = [];
+  for (let i = 0; i < pts.length;) {
+    let j = i;
+    while (j + 1 < pts.length && distanceMeters(pts[i], pts[j + 1]) <= stopMeters && pts[j + 1].time - pts[j].time <= maxGapMs) j++;
+    if (pts[j].time - pts[i].time >= dwellMs) {
+      const seg = pts.slice(i, j + 1);
+      stops.push({ lat: seg.reduce((a, p) => a + p.lat, 0) / seg.length, lng: seg.reduce((a, p) => a + p.lng, 0) / seg.length, time: pts[i].time });
+      i = j + 1;
+    } else i++;
+  }
+  const stamps = []; const stamped = new Set();
+  for (const st of stops) {
+    const date = todayStr(new Date(st.time));
+    for (const s of near(st)) {
+      const key = `${s.id}_${date}`;
+      if (stamped.has(key) || !canStamp(s, distanceMeters(st, s), undefined)) continue;
+      stamped.add(key);
+      if (!stampedOn(visits, s.id, new Date(`${date}T12:00:00`))) stamps.push({ spotId: s.id, date, time: st.time, lat: st.lat, lng: st.lng });
+    }
+  }
+  const stampedIds = new Set([...stamped].map((k) => k.slice(0, k.lastIndexOf('_'))));
+  const passed = new Map();
+  for (const p of pts) {
+    for (const s of near(p)) {
+      if (stampedIds.has(s.id) || passed.has(s.id) || !canStamp(s, distanceMeters(p, s), undefined)) continue;
+      passed.set(s.id, { spotId: s.id, time: p.time });
+    }
+  }
+  return { stamps, passed: [...passed.values()] };
+}

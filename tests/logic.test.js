@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -535,4 +535,27 @@ test('gpxDayDistances: 日ごとの距離、速さで散歩・サイクリング
   assert.deepEqual(Object.keys(r).sort(), ['2026-10-10', '2026-10-11']);
   assert.ok(Math.abs(r['2026-10-10'].walk - 300) <= 1);
   assert.ok(Math.abs(r['2026-10-11'].bike - 1000) <= 1);
+});
+
+test('matchGpxVisits: 大きな場所を歩いて通り抜けただけでは押さない', () => {
+  const t = new Date('2026-10-10T09:00:00').getTime();
+  const big = [{ id: 'park', ...at(500), radius: 600 }];
+  const walk = []; for (let i = 0; i <= 30; i++) walk.push({ ...at(i * 40), time: t + i * 30000 }); // 15分かけて 1.2km 通り抜ける
+  const r = matchGpxVisits(walk, big, []);
+  assert.equal(r.stamps.length, 0);
+  assert.deepEqual(r.passed.map((s) => s.spotId), ['park']);
+});
+
+test('matchGpxVisits: 3分以上いた場所だけ判子、通っただけは「通った」', () => {
+  const t = new Date('2026-10-10T09:00:00').getTime();
+  const spots = [{ id: 'stay', ...at(0), radius: 0 }, { id: 'pass', ...at(1000), radius: 0 }, { id: 'far', ...at(9000), radius: 0 }];
+  const pts = [];
+  for (let i = 0; i <= 5; i++) pts.push({ ...at(i * 5), time: t + i * 60000 }); // stay の近くに5分
+  for (let i = 1; i <= 20; i++) pts.push({ ...at(i * 100), time: t + 300000 + i * 72000 }); // pass を歩いて通り過ぎる
+  const r = matchGpxVisits(pts, spots, []);
+  assert.deepEqual(r.stamps.map((s) => s.spotId), ['stay']);
+  assert.equal(r.stamps[0].date, '2026-10-10');
+  assert.deepEqual(r.passed.map((s) => s.spotId), ['pass']);
+  // 既に押してあれば増やさない
+  assert.equal(matchGpxVisits(pts, spots, [{ spotId: 'stay', at: t }]).stamps.length, 0);
 });

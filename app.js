@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1406,7 +1406,8 @@ function openSettings() {
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定 ', verEl()),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
-      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）からまとめて判子')),
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）からまとめて判子'),
+      h('button', { class: 'btn', type: 'button', onclick: undoAllGpx }, '経路から押した判子を全部外す')),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・印・写真）'),
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '読み込む',
@@ -1737,7 +1738,7 @@ function showImportSheet(title, text, importId) {
 function pickGpxForImport() {
   showSheet(null, [
     h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '経路（GPX）からまとめて判子'),
-    h('p', { class: 'sub', style: 'margin:0 0 8px' }, 'GPX は、歩いた・走った道すじを記録したファイルです。先に別のアプリから書き出して、iPhone の「ファイル」に保存しておく必要があります。'),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, 'GPX は、歩いた・走った道すじを記録したファイルです。範囲に3分以上いた場所に判子を押し、通っただけの場所は「通った」の色にします。先に別のアプリから書き出して、iPhone の「ファイル」に保存しておく必要があります。'),
     h('ul', { class: 'welcome' },
       h('li', {}, 'Strava：パソコンのブラウザで strava.com を開き、アクティビティの「…」→「GPX をエクスポート」'),
       h('li', {}, 'iPhone のヘルスケア：右上の自分のアイコン →「すべてのヘルスケアデータを書き出す」→「ファイルに保存」。保存された export.zip を「ファイル」アプリで押して開くと、中の apple_health_export → workout-routes に、ワークアウトごとの GPX があります'),
@@ -1775,16 +1776,24 @@ async function runGpxImport(files) {
   }
   await saveDist();
   const spots = await spotsAround(dated, 0.005);
-  const { matches } = matchPhotoStamps(dated, spots, state.visits, 0); // 経路は通っただけなので、写真のように範囲を広げない
-  if (!matches.length) { toast('経路の近くに判子の場所はありませんでした'); return; }
+  // 範囲に3分以上いた場所だけ判子。通っただけの場所は「通った」（地図で実線の枠）にする（2026-10-14：通っただけで押されていた）
+  const { stamps, passed: passedList } = matchGpxVisits(points, spots, state.visits);
+  const p = passed();
+  let passedCount = 0;
+  for (const it of passedList) { if (!p[it.spotId]) passedCount++; p[it.spotId] = Math.max(p[it.spotId] || 0, it.time); }
+  try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ }
+  if (!stamps.length) {
+    drawMap();
+    toast(passedCount ? `立ち寄った場所はありませんでした（通った場所 ${passedCount}か所に色を付けました）` : '経路の近くに判子の場所はありませんでした');
+    return;
+  }
   const importId = db.newId();
   const placeSet = new Set();
   const days = new Set();
-  for (const m of matches) {
+  for (const m of stamps) {
     const spot = spotById(m.spotId);
     if (!spot) continue;
-    const stop = dated[m.photoIndex];
-    const visit = { id: db.newId(), spotId: spot.id, at: stop.time, lat: stop.lat, lng: stop.lng, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'gpx', importId };
+    const visit = { id: db.newId(), spotId: spot.id, at: m.time, lat: m.lat, lng: m.lng, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'gpx', importId };
     await db.put('visits', visit);
     placeSet.add(spot.id);
     days.add(m.date);
@@ -1792,7 +1801,18 @@ async function runGpxImport(files) {
   await loadData();
   render();
   toast(`経路から${placeSet.size}か所に判子。`);
-  showImportSheet('経路から判子', `${files.length}件の経路（${days.size}日分）から、通った${placeSet.size}か所に判子を付けました。`, importId);
+  showImportSheet('経路から判子', `${files.length}件の経路（${days.size}日分）から、3分以上立ち寄った${placeSet.size}か所に判子を付けました。通っただけの${passedCount}か所は「通った」の色にしました。`, importId);
+}
+
+// 前の版（v40 まで）は経路で通っただけの場所にも判子を押していたので、経路から押した判子をまとめて外せるようにする
+async function undoAllGpx() {
+  const n = state.visits.filter((v) => v.source === 'gpx').length;
+  if (!n) { toast('経路から押した判子はありません'); return; }
+  if (!confirm(`経路（GPX）から押した判子 ${n}個を全部外しますか？（写真や自分で押した判子はそのまま）`)) return;
+  for (const v of state.visits) if (v.source === 'gpx') await db.remove('visits', v.id);
+  await loadData();
+  render();
+  toast(`${n}個の判子を外しました`);
 }
 
 async function undoImport(importId) {
