@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -293,6 +293,15 @@ test('classifyFood: 表記ゆれ（ひらがな/カタカナ、「鍋」「汁�
   assert.equal(classifyFood('冷やし中華', foods), null); // 当たらなければ null
   assert.equal(classifyFood('', foods), null);
   assert.equal(classifyFood('何か', null), null);
+});
+
+test('normalizeName: 帳面の検索用に、ひらがな/カタカナ・空白・全角半角の違いを吸収する', () => {
+  assert.equal(normalizeName('きんかくじ'), normalizeName('キンカクジ'));
+  assert.equal(normalizeName('金 閣寺'), normalizeName('金閣寺'));
+  assert.equal(normalizeName('ｶﾞｰﾄﾞﾊﾟｰｼﾞ'), normalizeName('ガードパージ'));
+  assert.ok(normalizeName('きんかくじ京都').includes(normalizeName('かくじ')));
+  assert.equal(normalizeName(''), '');
+  assert.equal(normalizeName(null), '');
 });
 
 test('prefsVisited: meals（ご当地グルメ）も都道府県の塗りに数える', () => {

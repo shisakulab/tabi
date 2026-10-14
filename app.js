@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
 
@@ -24,7 +24,7 @@ const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所
 const $ = (id) => document.getElementById(id);
 const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); const modesEl = $('modes');
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
-const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate');
+const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate'); const settingsEl = $('settings');
 
 const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], foods: [], tab: 'spots', fixes: [] };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -243,10 +243,11 @@ fabEl.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-open]');
   if (!b) return;
   closeCard();
-  if (b.dataset.open === 'book') openBook();
+  if (b.dataset.open === 'book') { spotQuery = ''; foodQuery = ''; masuDetail = null; openBook(); }
   else if (b.dataset.open === 'diary') openDiary();
   else openRecord();
 });
+settingsEl.addEventListener('click', () => { closeCard(); openSettings(); });
 function render() {
   drawMap();
   drawQuest();
@@ -860,7 +861,7 @@ async function toggleNearAlert(on) {
   setSetting('nearalert', on);
   if (on && 'Notification' in window && Notification.permission === 'default') {
     try { await Notification.requestPermission(); } catch { /* 古い Safari はコールバック形式。振動だけで続ける */ }
-    openBook();
+    openSettings();
   }
 }
 function nearAlertNote() {
@@ -872,66 +873,123 @@ function nearAlertNote() {
 
 // ---------- 帳面 ----------
 function openBook() {
-  const tabs = [['spots', '場所'], ['seals', '印'], ['foods', 'ご当地'], ['prefs', '都道府県'], ['more', 'その他']];
-  const body = state.tab === 'seals' ? bookSeals() : state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : state.tab === 'more' ? bookMore() : bookSpots();
+  const tabs = [['spots', '名所'], ['foods', 'ご当地'], ['prefs', '都道府県']];
+  const body = state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : bookSpots();
   showSheet(openBook, [
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
-      class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button', onclick: () => { state.tab = k; openBook(); },
+      class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button',
+      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; masuDetail = null; openBook(); },
     }, label))),
     body,
   ]);
 }
 
+// 入力中の検索中は本文の DOM を作り直すが、入力欄のフォーカスとカーソル位置は保つ
+function reopenBookKeepFocus() {
+  const active = document.activeElement;
+  const id = active && active.id;
+  const start = active && active.selectionStart;
+  const end = active && active.selectionEnd;
+  openBook();
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.focus();
+  if (start != null && el.setSelectionRange) { try { el.setSelectionRange(start, end); } catch { /* 対応していない input type では無視 */ } }
+}
+
 function allListSpots() { return [...state.catalog.values(), ...state.seasonSpots]; }
 
-// これより長い一覧（道の駅・国宝など）は、都道府県ごとに畳んで出す
+// これより長い一覧（道の駅・国宝など）は、初期状態で畳んでおく
 const FOLD_OVER = 120;
 // 北から順（JIS の都道府県コード順）
 const PREF_ORDER = ['北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県', '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
   '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県',
   '鳥取県', '島根県', '岡山県', '広島県', '山口県', '徳島県', '香川県', '愛媛県', '高知県', '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'];
 
-function bookSpots() {
-  const spots = allListSpots();
-  return state.lists.map((l) => {
-    const p = listProgress(state.visits, spots, l.key);
-    const isSeason = l.key === 'seasons';
-    const masus = (cells) => h('div', { class: 'masus' }, cells.map((c) => h('button', {
-      class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord ? '' : ' nocoord') + (isSeason ? ' season' : ''), type: 'button',
-      style: `--c:${TIER_COLOR.list}`, title: c.name,
-      onclick: () => toast(`${c.name}${c.pref ? `（${c.pref}）` : ''}${c.hasCoord ? '' : '　位置が未登録のため判子は押せません'}`),
-    }, glyphOf(c.name))));
-    const names = (cells, summary) => h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, summary),
-      cells.map((c) => h('div', { class: 'row' + (c.got ? ' got' : '') },
-        h('span', {}, `${c.got ? '● ' : ''}${c.name}`),
-        h('span', { class: 'muted' }, c.hasCoord ? c.pref : `${c.pref} 位置未登録`))));
-    const head = h('div', { class: 'listhead' }, h('b', {}, l.name), h('span', { class: 'muted' }, l.note || ''), h('span', { class: 'n' }, `${p.count} / ${p.total}`));
-    if (!p.total) return h('section', {}, head, h('p', { class: 'muted' }, 'まだ登録がありません'));
-    if (p.total <= FOLD_OVER) return h('section', {}, head, masus(p.cells), names(p.cells, '名前の一覧'));
-    const byPref = new Map();
-    for (const c of p.cells) {
-      const k = PREF_ORDER.includes(c.pref) ? c.pref : '';
-      if (!byPref.has(k)) byPref.set(k, []);
-      byPref.get(k).push(c);
-    }
-    const groups = [...PREF_ORDER, ''].filter((k) => byPref.has(k)).map((k) => {
-      const cells = byPref.get(k);
-      const got = cells.filter((c) => c.got).length;
-      return h('details', { class: 'prefgroup' + (got ? ' got' : '') },
-        h('summary', {}, h('span', {}, k || '都道府県不明'), h('span', { class: 'n' }, `${got} / ${cells.length}`)),
-        masus(cells), names(cells, '名前'));
-    });
-    return h('section', {}, head, h('div', { class: 'prefgroups' }, groups));
-  });
+// マスを押すと、名前・都道府県と（位置が分かれば）「地図で見る」を出す
+let masuDetail = null;
+function openMasuDetail(id, name, pref) {
+  masuDetail = { name, pref, full: spotById(id) };
+  openBook();
+}
+function masuDetailPanel() {
+  if (!masuDetail) return null;
+  const spot = masuDetail.full;
+  const hasCoord = spot && Number.isFinite(spot.lat);
+  return h('div', { class: 'masudetail' },
+    h('div', {}, h('b', {}, masuDetail.name), masuDetail.pref ? h('span', { class: 'muted' }, '　' + masuDetail.pref) : null),
+    hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
+    h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
+      hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: () => { const s = spot; masuDetail = null; closeSheet(); focusSpot(s); } }, '地図で見る') : null,
+      h('button', { class: 'btn', type: 'button', onclick: () => { masuDetail = null; openBook(); } }, '閉じる')));
+}
+function barEl(count, total, color) {
+  const pct = total ? Math.min(100, Math.round((count / total) * 100)) : 0;
+  return h('div', { class: 'bar' }, h('i', { style: `width:${pct}%;background:${color}` }));
+}
+function masuCell(c, color, isSeason) {
+  return h('button', {
+    class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord === false ? ' nocoord' : '') + (isSeason ? ' season' : ''),
+    type: 'button', style: `--c:${color}`, title: `${c.name}${c.pref ? `（${c.pref}）` : ''}`,
+    onclick: () => openMasuDetail(c.id, c.name, c.pref),
+  }, glyphOf(c.name));
 }
 
-function bookSeals() {
-  const list = [...state.seals].sort((a, b) => (a.at < b.at ? 1 : -1));
+// 一覧に入っていない近所の場所（神社・お寺・喫茶店など）で押した判子を、種類ごとに出す
+function nearSealsSection() {
+  const seen = new Map();
+  for (const v of state.visits) {
+    if (seen.has(v.spotId)) continue;
+    const s = spotById(v.spotId);
+    if (s && s.tier === 'near' && NEAR_KINDS[s.kind]) seen.set(v.spotId, s);
+  }
+  if (!seen.size) return null;
+  const byKind = new Map();
+  for (const s of seen.values()) { if (!byKind.has(s.kind)) byKind.set(s.kind, []); byKind.get(s.kind).push(s); }
+  return h('section', { class: 'nearseals' },
+    h('div', { class: 'listhead' }, h('b', {}, '近所で押した判子')),
+    [...byKind.entries()].map(([k, list]) => h('div', {},
+      h('p', { class: 'muted', style: 'margin:8px 0 4px' }, NEAR_KINDS[k]),
+      h('div', { class: 'masus' }, list.map((s) => masuCell({ id: s.id, name: s.name, pref: s.pref, got: true }, TIER_COLOR.near, false))))));
+}
+
+let spotQuery = '';
+// 読み仮名と別名（data/kana.json、約430KB）は、検索欄を使ったときに初めて読む
+let kanaMap = null;
+let kanaLoading = false;
+function ensureKana() {
+  if (kanaMap || kanaLoading) return;
+  kanaLoading = true;
+  fetchJson('data/kana.json', {}).then((k) => {
+    kanaMap = new Map(Object.entries(k).map(([id, w]) => [id, normalizeName(w)]));
+    if (spotQuery && state.tab === 'spots' && !sheetEl.hidden) reopenBookKeepFocus();
+  });
+}
+function bookSpots() {
+  const spots = allListSpots();
+  const q = normalizeName(spotQuery);
+  const sections = state.lists.map((l) => {
+    const p = listProgress(state.visits, spots, l.key);
+    const isSeason = l.key === 'seasons';
+    const color = isSeason ? 'var(--seal)' : TIER_COLOR.list;
+    const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || (kanaMap && (kanaMap.get(c.id) || '').includes(q))) : p.cells;
+    if (!p.total || !cells.length) return null;
+    return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
+      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
+      l.note ? h('p', { class: 'muted note' }, l.note) : null,
+      barEl(p.count, p.total, color),
+      h('div', { class: 'masus' }, cells.map((c) => masuCell(c, color, isSeason))));
+  }).filter(Boolean);
   return [
-    h('p', { class: 'sub' }, '参拝・乗船などの記録です。数や順位は出しません。'),
-    list.length
-      ? h('ul', { class: 'list' }, list.map((s) => h('li', {}, sealRow(s, true))))
-      : h('p', { class: 'muted' }, 'まだ記録がありません。下の「＋」から残せます。'),
+    masuDetailPanel(),
+    h('input', {
+      id: 'spotsearch', class: 'search', type: 'search', placeholder: '名前・読み・別名で探す（例：きんかくじ）', value: spotQuery,
+      onfocus: ensureKana,
+      oninput: (e) => { spotQuery = e.target.value; ensureKana(); reopenBookKeepFocus(); },
+    }),
+    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした'),
+    nearSealsSection(),
   ];
 }
 
@@ -956,39 +1014,33 @@ async function deleteSeal(s) {
 
 // ---------- ご当地グルメ ----------
 const mealsFor = (food) => state.meals.filter((m) => m.itemKey === food.key);
-function foodsByPref() {
-  const byPref = new Map();
-  for (const f of state.foods) {
-    if (!byPref.has(f.pref)) byPref.set(f.pref, []);
-    byPref.get(f.pref).push(f);
-  }
-  return byPref;
+function foodMasu(f) {
+  const got = mealsFor(f).length > 0;
+  return h('button', {
+    class: 'masu' + (got ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: `${f.name}（${f.pref}）`,
+    onclick: () => openFoodSheet(f),
+  }, glyphOf(f.name));
 }
+let foodQuery = '';
 function bookFoods() {
   if (!state.foods.length) return [h('p', { class: 'muted' }, 'まだ読み込めていません')];
-  const byPref = foodsByPref();
   const mains = state.foods.filter((f) => f.main);
   const gotMains = mains.filter((f) => mealsFor(f).length > 0);
   const head = h('div', { class: 'listhead' }, h('b', {}, 'ご当地グルメ'), h('span', { class: 'muted' }, '農林水産省「うちの郷土料理」より'), h('span', { class: 'n' }, `${gotMains.length} / ${mains.length}`));
-  const foodRow = (f) => h('button', {
-    class: 'row' + (mealsFor(f).length ? ' got' : ''), type: 'button', onclick: () => openFoodSheet(f),
-  }, h('span', {}, `${mealsFor(f).length ? '● ' : ''}${f.name}`), h('span', { class: 'muted' }, ''));
-  const groups = [...PREF_ORDER, ''].filter((p) => byPref.has(p)).map((pref) => {
-    const items = byPref.get(pref);
-    const mainItems = items.filter((f) => f.main);
-    const otherItems = items.filter((f) => !f.main);
-    const got = mainItems.filter((f) => mealsFor(f).length > 0).length;
-    const masus = mainItems.length ? h('div', { class: 'masus' }, mainItems.map((f) => h('button', {
-      class: 'masu' + (mealsFor(f).length ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: f.name,
-      onclick: () => openFoodSheet(f),
-    }, glyphOf(f.name)))) : null;
-    const others = otherItems.length ? h('details', { class: 'spotlist' }, h('summary', { class: 'muted' }, `ほかの郷土料理（${otherItems.length}品）`),
-      otherItems.map(foodRow)) : null;
-    return h('details', { class: 'prefgroup' + (got ? ' got' : '') },
-      h('summary', {}, h('span', {}, pref || '都道府県不明'), h('span', { class: 'n' }, `${got} / ${mainItems.length}`)),
-      masus, others);
+  const search = h('input', {
+    id: 'foodsearch', class: 'search', type: 'search', placeholder: '料理名・都道府県名で探す', value: foodQuery,
+    oninput: (e) => { foodQuery = e.target.value; reopenBookKeepFocus(); },
   });
-  return [head, h('div', { class: 'prefgroups' }, groups)];
+  const q = normalizeName(foodQuery);
+  if (q) {
+    const matches = state.foods.filter((f) => [f.name, f.kana, f.pref, ...(f.aliases || [])].some((w) => normalizeName(w).includes(q)));
+    return [head, search, matches.length ? h('div', { class: 'masus' }, matches.map(foodMasu)) : h('p', { class: 'muted' }, '見つかりませんでした')];
+  }
+  const ordered = [...mains].sort((a, b) => {
+    const ai = PREF_ORDER.indexOf(a.pref); const bi = PREF_ORDER.indexOf(b.pref);
+    return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+  });
+  return [head, barEl(gotMains.length, mains.length, FOOD_COLOR), search, h('div', { class: 'masus' }, ordered.map(foodMasu))];
 }
 function foodRecordRow(m) {
   return h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto') },
@@ -1080,8 +1132,10 @@ function bookPrefs() {
   ];
 }
 
-function bookMore() {
-  return [
+// ---------- 設定 ----------
+function openSettings() {
+  showSheet(openSettings, [
+    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定'),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・印・写真）'),
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '読み込む',
@@ -1096,14 +1150,14 @@ function bookMore() {
         h('input', { type: 'checkbox', checked: setting('sound'), onchange: (e) => setSetting('sound', e.target.checked) }), '効果音（iPhone はマナーモードだと鳴らないことがあります）'),
       h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, '今日のお題の長さ（回って戻る時間）',
         h('div', { class: 'chips' }, LOOP_MINUTE_CHOICES.map((m) => h('button', { class: 'chip' + (loopMinutes() === m ? ' on' : ''), type: 'button',
-          onclick: () => { setLoopMinutes(m); openBook(); } }, `${m}分`)))),
+          onclick: () => { setLoopMinutes(m); openSettings(); } }, `${m}分`)))),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('nearalert'), onchange: (e) => toggleNearAlert(e.target.checked) }), '判子を押せる場所に着いたら知らせる（振動・通知）'),
       h('p', { class: 'muted', style: 'margin:0' }, nearAlertNote()),
       h('p', { class: 'muted', style: 'margin:0' }, '画面を消している間は位置を取れないので押せません。')),
     h('p', { class: 'muted' }, 'データはこの端末の中だけにあります。機種変更の前に書き出してください。'),
     h('p', { class: 'muted' }, '出典：地図 ' + '国土地理院（淡色地図）／場所のデータ Wikidata（CC0）／郷土料理：農林水産省「うちの郷土料理」（一部を要約）。位置情報は端末の外には送りません。'),
-  ];
+  ]);
 }
 
 // ---------- 日記 ----------
@@ -1124,7 +1178,7 @@ function openDiary() {
           h('span', {}, `${s ? s.name : v.spotId}${v.seasonal ? '　季節の判子' : ''}`),
           h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || ''));
       }),
-      d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, false)))))
+      d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true)))))
       : h('p', { class: 'muted' }, 'まだ記録がありません。'),
     h('p', { class: 'muted', style: 'font-size:12px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。'),
   ]);

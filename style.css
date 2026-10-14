@@ -184,11 +184,13 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   background: var(--paper); color: var(--ink); display: grid; place-items: center; box-shadow: 0 3px 10px rgba(0,0,0,.3);
 }
 .locate.on { background: var(--accent); border-color: #fff; color: #fff; }
+.gear { bottom: calc(var(--safe-b) + 32px + 56px); width: 40px; height: 40px; }
 @media (max-width: 400px) {
   .fab { gap: 12px; padding: 0 52px; } /* 右下の現在地ボタンを避けつつ、左右同じ余白で真ん中にそろえる */
   .rbtn { width: 50px; height: 50px; font-size: 13px; }
   .rbtn.main { width: 64px; height: 64px; }
   .locate { right: 8px; width: 44px; height: 44px; }
+  .gear { right: 8px; bottom: calc(var(--safe-b) + 32px + 52px); width: 38px; height: 38px; }
 }
 
 /* シート */
@@ -219,29 +221,45 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .tab { min-height: 44px; padding: 0 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--ink); }
 .tab.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .listhead { display: flex; align-items: baseline; gap: 8px; margin: 14px 0 6px; }
-.listhead b { font-family: var(--serif); font-size: 17px; }
-.listhead .n { margin-left: auto; font-family: var(--serif); font-size: 18px; font-weight: 700; }
-.masus { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; }
+.listhead b { font-family: var(--serif); font-size: 17px; white-space: nowrap; }
+.listhead .n { margin-left: auto; white-space: nowrap; font-family: var(--serif); font-size: 18px; font-weight: 700; }
+.search {
+  display: block; width: 100%; min-height: 44px; padding: 0 14px; margin: 0 0 12px; border: 1px solid var(--line);
+  border-radius: 22px; background: var(--card); color: var(--ink);
+}
+.bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; margin: 4px 0 10px; }
+.bar i { display: block; height: 100%; }
+.masus { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 6px; }
+/* まだ：地図の「まだ」の判子と同じ、点線の丸。季節の名所は角丸の四角 */
 .masu {
-  aspect-ratio: 1; border: 1px dashed var(--line); border-radius: 6px; display: grid; place-items: center;
+  aspect-ratio: 1; border: 1.5px dashed var(--line); border-radius: 50%; display: grid; place-items: center;
   font: 700 13px var(--serif); color: var(--ink2); background: transparent; padding: 0;
 }
-.masu.got { background: var(--c, var(--day)); border: 1px solid var(--c, var(--day)); color: #fff; }
-.masu.nocoord { border-style: dotted; opacity: .6; }
+.masu.season { border-radius: 6px; }
+/* 押した：地図の判子と同じ色・かすれ */
+.masu.got {
+  border-style: solid; border-color: var(--c, var(--day)); background: var(--c, var(--day)); color: #fff;
+  -webkit-mask-image: var(--kasure); mask-image: var(--kasure); -webkit-mask-size: 64px 64px; mask-size: 64px 64px;
+}
+.masu.nocoord { opacity: .6; }
 .masu.season.got { background: var(--seal); border-color: var(--seal); }
+.masudetail {
+  display: grid; gap: 2px; margin: 0 0 12px; padding: 10px 12px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.listgroups { display: grid; }
+.listgroup { border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px; }
+.listgroup > summary { list-style: none; display: flex; gap: 8px; align-items: baseline; min-height: 40px; cursor: pointer; }
+.listgroup > summary b { font-family: var(--serif); font-size: 16px; }
+.listgroup > summary .n { margin-left: auto; font-family: var(--serif); font-size: 16px; font-weight: 700; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.listgroup > summary::-webkit-details-marker { display: none; }
+.listgroup > summary::after { content: '›'; color: var(--ink2); transition: transform .15s; }
+.listgroup[open] > summary::after { transform: rotate(90deg); }
+.listgroup.got > summary b { font-weight: 700; }
+.listgroup .note { margin: 2px 0 6px; }
+.nearseals { margin-top: 10px; }
 .spotlist { margin-top: 8px; display: grid; gap: 4px; font-size: 14px; }
-.spotlist .row, .spotlist button.row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
-.spotlist .row.got { font-weight: 700; }
-.spotlist button.row { width: 100%; background: none; border-left: none; border-right: none; border-top: none; font: inherit; color: inherit; text-align: left; }
-.prefgroups { display: grid; }
-.prefgroup { border-bottom: 1px solid var(--line); }
-.prefgroup > summary { list-style: none; display: flex; gap: 8px; align-items: center; min-height: 40px; cursor: pointer; font-size: 15px; }
-.prefgroup > summary .n { margin-left: auto; color: var(--ink2); font-variant-numeric: tabular-nums; }
-.prefgroup > summary::-webkit-details-marker { display: none; }
-.prefgroup > summary::after { content: '›'; color: var(--ink2); transition: transform .15s; }
-.prefgroup[open] > summary::after { transform: rotate(90deg); }
-.prefgroup.got > summary { font-weight: 700; }
-.prefgroup[open] { padding-bottom: 10px; }
+.spotlist .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .prefgrid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 8px 0 14px; }
 .pref {
   aspect-ratio: 1; border: 1px solid var(--line); border-radius: 5px; display: grid; place-items: center; align-content: center;
