@@ -492,3 +492,85 @@ function exifDateFrom(v, t, end) {
   const sub = ifd0.get(0x8769) ? readIfd(v.getUint32(ifd0.get(0x8769).val, le)) : null;
   return (sub && str(sub.get(0x9003))) || str(ifd0.get(0x0132)) || null;
 }
+
+// ---------- 写真からまとめて判子 ----------
+// JPEG の EXIF から撮影位置 { lat, lng }。GPS 情報がなければ（HEIC が変換されずに来た場合など）null
+export function readExifGPS(buf) {
+  try {
+    const v = new DataView(buf);
+    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return null;
+    let p = 2;
+    while (p + 4 <= v.byteLength) {
+      if (v.getUint8(p) !== 0xff) return null;
+      const marker = v.getUint8(p + 1);
+      if (marker === 0xda || marker === 0xd9) return null;
+      const len = v.getUint16(p + 2);
+      if (marker === 0xe1 && v.getUint32(p + 4) === 0x45786966 && v.getUint16(p + 8) === 0) {
+        return exifGpsFrom(v, p + 10, p + 2 + len);
+      }
+      p += 2 + len;
+    }
+  } catch { /* 壊れていれば null */ }
+  return null;
+}
+function exifGpsFrom(v, t, end) {
+  const order = v.getUint16(t);
+  const le = order === 0x4949;
+  if (!le && order !== 0x4d4d) return null;
+  if (v.getUint16(t + 2, le) !== 42) return null;
+  const readIfd = (off) => {
+    const tags = new Map();
+    const n = v.getUint16(t + off, le);
+    for (let i = 0; i < n; i++) {
+      const e = t + off + 2 + i * 12;
+      if (e + 12 > end) break;
+      tags.set(v.getUint16(e, le), { type: v.getUint16(e + 2, le), count: v.getUint32(e + 4, le), val: e + 8 });
+    }
+    return tags;
+  };
+  const ifd0 = readIfd(v.getUint32(t + 4, le));
+  const gpsTag = ifd0.get(0x8825);
+  if (!gpsTag) return null;
+  const gps = readIfd(v.getUint32(gpsTag.val, le));
+  // 度分秒（RATIONAL×3）。緯度・経度とも、符号は参照（N/S・E/W）で付ける
+  const dms = (tag) => {
+    if (!tag || tag.type !== 5 || tag.count < 3) return null;
+    const at = t + v.getUint32(tag.val, le);
+    const part = (i) => { const num = v.getUint32(at + i * 8, le); const den = v.getUint32(at + i * 8 + 4, le); return den ? num / den : 0; };
+    return part(0) + part(1) / 60 + part(2) / 3600;
+  };
+  // 参照（ASCII 1 文字 + NUL）は 4 バイト以内なのでタグに収まっている
+  const ref = (tag) => (tag ? String.fromCharCode(v.getUint8(tag.val)) : null);
+  const lat = dms(gps.get(0x0002));
+  const lng = dms(gps.get(0x0004));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat: ref(gps.get(0x0001)) === 'S' ? -lat : lat, lng: ref(gps.get(0x0003)) === 'W' ? -lng : lng };
+}
+
+// 写真（{ date: 'YYYY-MM-DD'|null, lat, lng }）と場所から、撮影日ごとに押せる判子を選ぶ。
+// 一覧の場所・近所の場所の両方を対象に、canStamp の範囲に入るものを全部選ぶ（同じ場所・同じ建物を複数の一覧が指していることがあるため）。
+// 同じ日・同じ場所はまとめて1つ（この一括の中の重複も、既に押してある判子も、どちらも増やさない）
+// 返り値：matches（{ spotId, date, photoIndex }の配列。photoIndex はその判子に付ける写真の最初の1枚）、
+//         withoutLocation（位置か日付が読めなかった写真の数）、withoutSpot（位置はあるが近くに場所がなかった写真の数）
+export function matchPhotoStamps(photos, spots, visits) {
+  const matches = [];
+  const seen = new Set();
+  let withoutLocation = 0;
+  let withoutSpot = 0;
+  for (let i = 0; i < photos.length; i++) {
+    const p = photos[i];
+    if (!p || !p.date || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) { withoutLocation++; continue; }
+    let any = false;
+    for (const spot of spots) {
+      if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
+      if (!canStamp(spot, distanceMeters(p, spot), undefined)) continue;
+      any = true;
+      const key = `${spot.id}_${p.date}`;
+      if (seen.has(key) || stampedOn(visits, spot.id, new Date(`${p.date}T12:00:00`))) continue;
+      seen.add(key);
+      matches.push({ spotId: spot.id, date: p.date, photoIndex: i });
+    }
+    if (!any) withoutSpot++;
+  }
+  return { matches, withoutLocation, withoutSpot };
+}

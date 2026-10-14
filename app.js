@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
 
@@ -1168,6 +1168,7 @@ function openDiary() {
   days.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   showSheet(openDiary, [
     h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '日記'),
+    h('button', { class: 'btn', type: 'button', style: 'margin-bottom:10px', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
     days.length ? days.map((d) => h('section', { class: 'day' },
       h('h3', {}, fmtDate(d.date)),
       distText(dist.days[d.date]) ? h('p', { class: 'muted', style: 'margin:0 0 6px' }, `移動：${distText(dist.days[d.date])}`) : null,
@@ -1266,6 +1267,7 @@ function openRecord() {
   showSheet(null, [h('div', { class: 'form' },
     h('h2', { style: 'font-size:20px' }, '記録する'),
     h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。御朱印などの印をいただいたら、種類を選んでください。'),
+    h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '種類'), chips),
     h('label', { class: 'f' }, '日付', date),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },
@@ -1284,6 +1286,100 @@ function openRecord() {
     h('label', { class: 'f' }, 'ひとこと', note),
     foodHint,
     save)]);
+}
+
+// ---------- 写真からまとめて判子 ----------
+// 写真をまとめて選ぶ→確かめる画面なしで、撮影日・撮影位置から当てはまる判子を全部押す。
+// 押した分には importId を付けておき、「まとめて取り消す」でその回の分だけ外せるようにする。
+function pickPhotosForImport() {
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
+    const files = [...e.target.files];
+    input.remove();
+    if (files.length) await runPhotoImport(files);
+  } });
+  document.body.append(input);
+  input.click();
+}
+
+async function runPhotoImport(files) {
+  toast(`${files.length}枚を調べています…`);
+  const photos = [];
+  for (const file of files) {
+    let date = null; let lat = null; let lng = null;
+    try {
+      const buf = await file.arrayBuffer();
+      date = readExifDate(buf);
+      const gps = readExifGPS(buf); // HEIC など読めない形式は null のまま（位置なし扱い）
+      if (gps) { lat = gps.lat; lng = gps.lng; }
+    } catch { /* 読めない写真は位置なし扱いで続ける */ }
+    photos.push({ file, date, lat, lng });
+  }
+  // 写真の位置の近くの区画を読み込んでおく（地図を開いていない場所でも判定できるように）
+  const margin = 0.03;
+  const keys = new Set();
+  for (const p of photos) {
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
+    for (const k of tilesForBounds(p.lat - margin, p.lng - margin, p.lat + margin, p.lng + margin)) keys.add(k);
+  }
+  await ensureTiles([...keys]);
+  const spots = [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+  const { matches, withoutLocation, withoutSpot } = matchPhotoStamps(photos, spots, state.visits);
+  if (!matches.length) {
+    toast(withoutLocation || withoutSpot
+      ? `判子は付きませんでした（位置や日付が分からない写真 ${withoutLocation}枚、近くに場所がない写真 ${withoutSpot}枚）`
+      : '判子は付きませんでした');
+    return;
+  }
+  const importId = db.newId();
+  const placeSet = new Set();
+  const blobCache = new Map();
+  for (const m of matches) {
+    const spot = spotById(m.spotId);
+    if (!spot) continue;
+    const photo = photos[m.photoIndex];
+    let photoId = null;
+    try {
+      if (!blobCache.has(m.photoIndex)) blobCache.set(m.photoIndex, await resizePhoto(photo.file));
+      photoId = db.newId();
+      await db.put('photos', { id: photoId, blob: blobCache.get(m.photoIndex) });
+    } catch { /* 写真が保存できなくても判子は付ける */ }
+    const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${m.date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'photo', importId };
+    await db.put('visits', visit);
+    const seal = { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: m.date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId };
+    await db.put('seals', seal);
+    placeSet.add(spot.id);
+  }
+  await loadData();
+  render();
+  showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+}
+
+function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId) {
+  toast(`${photoCount}枚から${placeCount}か所に判子。`);
+  const extra = [
+    withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
+    withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
+  ].filter(Boolean).join('・');
+  showSheet(null, [
+    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '写真から判子'),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`),
+    h('div', { style: 'display:flex;gap:8px;justify-content:center' },
+      h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す'),
+      h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
+  ], () => sheetEl.classList.add('small'));
+}
+
+async function undoImport(importId) {
+  const [visits, seals] = await Promise.all([db.getAll('visits'), db.getAll('seals')]);
+  for (const s of seals) {
+    if (s.importId !== importId) continue;
+    if (s.photoId) await db.remove('photos', s.photoId);
+    await db.remove('seals', s.id);
+  }
+  for (const v of visits) if (v.importId === importId) await db.remove('visits', v.id);
+  await loadData();
+  render();
+  toast('取り消しました');
 }
 
 // ---------- データを守る ----------
