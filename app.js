@@ -569,6 +569,22 @@ document.addEventListener('click', (e) => {
   if (b && !b.dataset.sfx) sfx('tap');
 }, true);
 
+// 振動。Android は navigator.vibrate、iPhone の Safari は vibrate が無いので、
+// スイッチ型のチェックボックス（Safari 18〜）を押すと軽く振動するのを使う（押した操作の流れの中でだけ効く）
+let hapticEl = null;
+function haptic(pattern = 60) {
+  if (!setting('vibrate')) return;
+  if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch { /* 対応していなければ何もしない */ } return; }
+  try {
+    if (!hapticEl) {
+      const input = h('input', { type: 'checkbox', switch: true, id: 'haptic-sw' });
+      hapticEl = h('label', { for: 'haptic-sw', 'aria-hidden': 'true', style: 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none' }, input);
+      document.body.append(hapticEl);
+    }
+    hapticEl.click();
+  } catch { /* 古い iPhone では振動しない */ }
+}
+
 async function stamp(spot) {
   if (stamping) return;
   if (stampedOn(state.visits, spot.id, now())) { toast('この場所の判子は今日もう押してあります'); return; }
@@ -590,6 +606,7 @@ async function stamp(spot) {
     await loadData();
     closeCard();
     sfx('stamp');
+    haptic(60);
     if (wasQuest) setTimeout(() => sfx('chime'), 350);
     await celebrate(spot);
     render();
@@ -861,7 +878,7 @@ async function autoStamp() {
     nearSig = '';
     updateNear();
     toast(msg);
-    if (setting('vibrate')) navigator.vibrate?.(60);
+    haptic(60);
   } catch (err) {
     toast('保存できませんでした：' + (err && err.message ? err.message : err));
   } finally {
@@ -940,7 +957,7 @@ async function alertNear(spot, season) {
   const key = `${spot.id}|${now().toDateString()}`;
   if (alerted.has(key) || !setting('nearalert')) return;
   alerted.add(key);
-  navigator.vibrate?.([120, 80, 120]);
+  haptic([120, 80, 120]);
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const body = season ? `季節の判子を押せます（${season.label}）` : '判子を押せます';
   try {
@@ -1285,7 +1302,7 @@ function openSettings() {
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('auto'), onchange: (e) => setSetting('auto', e.target.checked) }), '自動で判子を押す（アプリを開いている間）'),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
-        h('input', { type: 'checkbox', checked: setting('vibrate'), onchange: (e) => setSetting('vibrate', e.target.checked) }), '押したら振動する'),
+        h('input', { type: 'checkbox', checked: setting('vibrate'), onchange: (e) => setSetting('vibrate', e.target.checked) }), '押したら振動する（iPhone は iOS 18 以降）'),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('sound'), onchange: (e) => setSetting('sound', e.target.checked) }), '効果音（iPhone はマナーモードだと鳴らないことがあります）'),
       h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, '今日のお題の長さ（回って戻る時間）',
