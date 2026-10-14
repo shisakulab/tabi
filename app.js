@@ -1268,6 +1268,9 @@ function openSettings() {
   showSheet(openSettings, [
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定'),
     h('div', { class: 'setrow' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）からまとめて判子')),
+    h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・印・写真）'),
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '読み込む',
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: importData })),
@@ -1703,6 +1706,21 @@ function openWelcome(done) {
     h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:8px', onclick: finish }, 'はじめる'),
   ]);
 }
+// ---------- 初回に一度だけ：これまでの旅を判子に ----------
+// ブラウザのアプリは写真や位置の履歴を自分では読めない（毎回選んでもらう必要がある）ので、初回に一度だけ大きく案内する
+function importAsked() { try { return localStorage.getItem(LS + 'importAsk') === '1'; } catch { return true; } }
+function openImportAsk(done) {
+  const go = (fn) => { try { localStorage.setItem(LS + 'importAsk', '1'); } catch { /* 保存できなくても続ける */ } closeSheet(); if (fn) fn(); if (done) done(); };
+  showSheet(null, [
+    h('h2', { style: 'font-size:22px;margin:4px 0 8px;text-align:center' }, 'これまでの旅も判子にしますか？'),
+    h('p', { class: 'sub', style: 'margin:0 0 10px' }, 'スマホの写真の撮影場所と日付から、行った場所にまとめて判子を押します。確かめる画面はなく、あとで「まとめて取り消す」で外せます。写真は端末の外に送りません。'),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次の画面で、旅の写真をまとめて選んでください（多いほど判子が増えます）。'),
+    h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickPhotosForImport) }, '写真から判子を押す'),
+    h('button', { class: 'btn', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickGpxForImport) }, 'Strava などの経路（GPX ファイル）から'),
+    h('button', { class: 'btn', type: 'button', style: 'width:100%', onclick: () => go(null) }, 'あとで（設定の歯車からいつでも）'),
+  ], () => sheetEl.classList.add('small'));
+}
+
 function startLocation() {
   getPos().then((pos) => {
     if (!pos || !mainMap) return;
@@ -1728,7 +1746,9 @@ function startLocation() {
   drawModes();
   initMap();
   render();
-  if (welcomed()) { startLocation(); maybeRemindBackup(); } else openWelcome(startLocation);
+  if (!welcomed()) openWelcome(() => { startLocation(); openImportAsk(); });
+  else if (!importAsked()) { startLocation(); openImportAsk(); }
+  else { startLocation(); maybeRemindBackup(); }
   if (recordCount()) requestPersist();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     const hadController = !!navigator.serviceWorker.controller;
