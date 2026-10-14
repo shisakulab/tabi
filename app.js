@@ -139,9 +139,13 @@ async function loadData() {
   // 経路（GPX・ヘルスケア）からは判子を押さず「通った」の印だけにする（2026-10-14 決定）。前の版で押した判子は「通った」に移す
   const fromGpx = state.visits.filter((v) => v.source === 'gpx');
   if (fromGpx.length) {
-    const p = passed();
-    for (const v of fromGpx) { p[v.spotId] = Math.max(p[v.spotId] || 0, v.at || 0); await db.remove('visits', v.id); }
-    try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ }
+    const p = passed(); const pp = passedPos();
+    for (const v of fromGpx) {
+      p[v.spotId] = Math.max(p[v.spotId] || 0, v.at || 0);
+      if (!pp[v.spotId] && Number.isFinite(v.lat) && Number.isFinite(v.lng)) pp[v.spotId] = [v.lat, v.lng];
+      await db.remove('visits', v.id);
+    }
+    savePassed();
     state.visits = state.visits.filter((v) => v.source !== 'gpx');
   }
 }
@@ -349,6 +353,19 @@ function passed() {
   try { passedMap = JSON.parse(localStorage.getItem('tabigoyomi.passed') || '{}') || {}; } catch { passedMap = {}; }
   return passedMap;
 }
+// 通った場所の位置 { spotId: [lat, lng] }。引いた地図では近所の場所の区画を読まないので、位置をここに持っておいて描く
+let passedPosMap = null;
+function passedPos() {
+  if (passedPosMap) return passedPosMap;
+  try { passedPosMap = JSON.parse(localStorage.getItem('tabigoyomi.passedpos') || '{}') || {}; } catch { passedPosMap = {}; }
+  return passedPosMap;
+}
+function savePassed() {
+  try {
+    localStorage.setItem('tabigoyomi.passed', JSON.stringify(passed()));
+    localStorage.setItem('tabigoyomi.passedpos', JSON.stringify(passedPos()));
+  } catch { /* 保存できなくても続ける */ }
+}
 // 今いる位置で範囲に入っている場所を「通った」にし、地図の判子を描き直す
 function markPassed(pos, cands) {
   const p = passed();
@@ -358,10 +375,11 @@ function markPassed(pos, cands) {
     if (!canStamp(s, d, state.acc)) continue;
     if (!p[s.id]) changed = true;
     p[s.id] = Date.now();
+    passedPos()[s.id] = [s.lat, s.lng];
     const m = markers.get(s.id);
     if (m) m.setIcon(hankoIcon(s));
   }
-  if (changed) { try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ } }
+  if (changed) savePassed();
 }
 
 // 季節＝赤、名所＝紺、近所＝緑、道の駅＝茶。empty（まだ押していない）判定は呼び出し側で別に OFF_COLOR を使う
@@ -446,6 +464,10 @@ async function drawMap() {
     // 一覧の場所は1つずつ。近所の場所は寄るまで（MIN_ZOOM_NEAR）近いものをまとめて数で出す
     // 押した・通った近所の場所は、寄っていなくても1つずつ出す（数の丸に埋もれていた）
     const mineNear = (s) => s.tier === 'near' && (visitsOf(s.id).length > 0 || !!passed()[s.id]);
+    // 前の版で「通った」にした場所は位置を持っていないので、区画を読んだときに足しておく（引いた地図で描けるように）
+    const p = passed(); const pp = passedPos(); let filled = false;
+    for (const s of inView) if (p[s.id] && !pp[s.id]) { pp[s.id] = [s.lat, s.lng]; filled = true; }
+    if (filled) savePassed();
     list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR || mineNear(s)), ...seasons].slice(0, 400);
     groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near' && !mineNear(s)), z);
   }
@@ -468,6 +490,16 @@ async function drawMap() {
   // 大きく引いたときも、判子を押した場所は数の丸に埋もれないよう、塗りつぶした丸で一番上に出す
   if (z < MIN_ZOOM_ALL) {
     const shown = dot ? new Set() : new Set(list.map((s) => s.id));
+    // 通っただけの場所は白抜きの輪（押した場所より下、数の丸より上）
+    for (const g of myPassedGroups(b, z, shown)) {
+      // 数が多いほど大きく（押した丸と同じ升に重なっても、外側に輪がのぞくように）
+      const size = g.n > 1 ? Math.min(34, Math.round(20 + 3 * Math.log2(g.n))) : 12;
+      L.marker([g.lat, g.lng], {
+        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mypass', style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+        title: g.n > 1 ? `通った ${g.n} か所` : `${g.name}（通った）`, zIndexOffset: 500,
+      }).on('click', () => mainMap.setView([g.lat, g.lng], Math.min(z + 3, MIN_ZOOM_ALL), { animate: !reduceMotion() }))
+        .addTo(layer);
+    }
     for (const g of myStampGroups(b, z, shown)) {
       const size = g.n > 1 ? 22 : 16;
       L.marker([g.lat, g.lng], {
@@ -491,6 +523,25 @@ function myStampGroups(b, z, skip) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !b.pad(0.1).contains([lat, lng])) continue;
     bySpot.set(v.spotId, { spot, lat, lng });
   }
+  return cellGroups(bySpot, z);
+}
+
+// 通っただけ（判子はまだ）の場所を、同じように升ごとにまとめる。位置は「通った」に保存したもの、なければ場所のデータ
+function myPassedGroups(b, z, skip) {
+  const stamped = new Set(state.visits.map((v) => v.spotId));
+  const pp = passedPos();
+  const bySpot = new Map();
+  for (const id of Object.keys(passed())) {
+    if (skip.has(id) || stamped.has(id)) continue;
+    const spot = spotById(id);
+    const ll = pp[id] || (spot && Number.isFinite(spot.lat) ? [spot.lat, spot.lng] : null);
+    if (!ll || !b.pad(0.1).contains(ll)) continue;
+    bySpot.set(id, { spot, lat: ll[0], lng: ll[1] });
+  }
+  return cellGroups(bySpot, z);
+}
+
+function cellGroups(bySpot, z) {
   const cells = new Map();
   for (const [id, it] of bySpot) {
     const p = mainMap.project([it.lat, it.lng], z);
@@ -1824,10 +1875,16 @@ async function runGpxImport(files) {
   const spots = await spotsAround(dated, 0.005);
   // 判子は押さず、近くを通った場所（立ち寄った場所も）を全部「通った」にする
   const { stamps, passed: passedList } = matchGpxVisits(points, spots, state.visits);
-  const p = passed();
+  const p = passed(); const pp = passedPos();
+  const spotOf = new Map(spots.map((x) => [x.id, x]));
   let passedCount = 0;
-  for (const it of [...stamps, ...passedList]) { if (!p[it.spotId]) passedCount++; p[it.spotId] = Math.max(p[it.spotId] || 0, it.time || 0); }
-  try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ }
+  for (const it of [...stamps, ...passedList]) {
+    if (!p[it.spotId]) passedCount++;
+    p[it.spotId] = Math.max(p[it.spotId] || 0, it.time || 0);
+    const sp = spotOf.get(it.spotId);
+    if (sp && Number.isFinite(sp.lat)) pp[it.spotId] = [sp.lat, sp.lng];
+  }
+  savePassed();
   drawMap();
   toast(passedCount ? `経路から、通った場所 ${passedCount}か所に印を付けました（判子は押していません）` : '経路の近くに、新しく通った場所はありませんでした');
 }

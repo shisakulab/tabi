@@ -104,9 +104,14 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   display: grid; place-items: center; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--ink2) 55%, transparent); background: rgba(255,255,255,.45);
   font: 700 11px var(--serif); color: var(--ink2);
 }
-/* 引いた地図の季節の名所：まだは白抜き、押したら塗る（凡例の「点線＝まだ・塗り＝押した」に合わせる） */
-.sdot { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2.5px solid var(--seal); box-sizing: border-box; }
+/* 引いた地図の季節の名所：まだは点線の白抜き、押したら塗る（凡例の「点線＝まだ・塗り＝押した」に合わせる） */
+.sdot { width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px dotted var(--seal); box-sizing: border-box; }
 .sdot.got { background: var(--seal); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--seal); }
+/* 引いた地図の、通っただけの場所（白抜きの輪。凡例の「通った＝実線の枠」） */
+.mypass {
+  display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.9); border: 2.5px solid var(--c); box-sizing: border-box;
+  font: 700 9px system-ui, sans-serif; color: var(--c);
+}
 /* 引いた地図の、判子を押した場所（数の丸より上に、塗りつぶしで） */
 .mydot {
   display: grid; place-items: center; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-sizing: border-box;
