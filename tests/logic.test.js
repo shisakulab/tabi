@@ -4,6 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -182,6 +183,91 @@ test('readExifDate: II / MM / なし / 壊れ', () => {
   assert.equal(readExifDate(new Uint8Array([1, 2, 3]).buffer), null);
   assert.equal(readExifDate(makeJpeg(true).slice(0, 30)), null);
   assert.equal(readExifDate(new ArrayBuffer(0)), null);
+});
+
+// GPS 付き JPEG（IFD0 に ExifIFD と GPS IFD の両方を持つ、iPhone の写真に近い形）
+function makeGpsJpeg(le, { withGps = true, lat = { d: 35, m: 41, s: 222, sDen: 10, ref: 'N' }, lng = { d: 139, m: 41, s: 306, sDen: 10, ref: 'E' } } = {}) {
+  const ascii = (s) => [...s].map((c) => c.charCodeAt(0)).concat(0);
+  const u16 = (n) => (le ? [n & 255, n >> 8] : [n >> 8, n & 255]);
+  const u32 = (n) => (le ? [n & 255, (n >> 8) & 255, (n >> 16) & 255, n >>> 24] : [n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255]);
+  const rational = (num, den) => [...u32(num), ...u32(den)];
+  const refInline = (ch) => [ch.charCodeAt(0), 0, 0, 0]; // ASCII count2 は4バイトの値欄にそのまま入る
+  const date = ascii('2024:05:06 07:08:09');
+
+  const ifd0Off = 8;
+  const exifOff = ifd0Off + 2 + 2 * 12 + 4; // 38
+  const dateOff = exifOff + 2 + 1 * 12 + 4; // 56
+  const gpsOff = dateOff + 20; // 76
+  const latOff = gpsOff + 2 + 4 * 12 + 4; // 130
+  const lngOff = latOff + 24; // 154
+
+  const tiff = [
+    ...(le ? [0x49, 0x49] : [0x4d, 0x4d]), ...u16(42), ...u32(ifd0Off),
+    ...u16(2), // IFD0: ExifIFD ポインタ・GPS IFD ポインタ
+    ...u16(0x8769), ...u16(4), ...u32(1), ...u32(exifOff),
+    ...u16(0x8825), ...u16(4), ...u32(1), ...u32(gpsOff),
+    ...u32(0),
+    ...u16(1), // ExifIFD: 撮影日時
+    ...u16(0x9003), ...u16(2), ...u32(20), ...u32(dateOff),
+    ...u32(0),
+    ...date,
+    ...u16(withGps ? 4 : 0), // GPS IFD
+    ...(withGps ? [
+      ...u16(0x0001), ...u16(2), ...u32(2), ...refInline(lat.ref),
+      ...u16(0x0002), ...u16(5), ...u32(3), ...u32(latOff),
+      ...u16(0x0003), ...u16(2), ...u32(2), ...refInline(lng.ref),
+      ...u16(0x0004), ...u16(5), ...u32(3), ...u32(lngOff),
+    ] : []),
+    ...u32(0),
+    ...(withGps ? [
+      ...rational(lat.d, 1), ...rational(lat.m, 1), ...rational(lat.s, lat.sDen),
+      ...rational(lng.d, 1), ...rational(lng.m, 1), ...rational(lng.s, lng.sDen),
+    ] : []),
+  ];
+  const body = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiff];
+  const len = body.length + 2;
+  const app1 = [0xff, 0xe1, len >> 8, len & 255, ...body];
+  return new Uint8Array([0xff, 0xd8, ...app1, 0xff, 0xd9]).buffer;
+}
+
+test('readExifGPS: II / MM / 南緯西経 / GPS なし / 壊れ', () => {
+  const near = (v, t) => Math.abs(v - t) < 1e-6;
+  const le = readExifGPS(makeGpsJpeg(true));
+  assert.ok(near(le.lat, 35.6895) && near(le.lng, 139.6918333));
+  const be = readExifGPS(makeGpsJpeg(false));
+  assert.ok(near(be.lat, 35.6895) && near(be.lng, 139.6918333));
+  const sw = readExifGPS(makeGpsJpeg(true, { lat: { d: 35, m: 41, s: 222, sDen: 10, ref: 'S' }, lng: { d: 139, m: 41, s: 306, sDen: 10, ref: 'W' } }));
+  assert.ok(near(sw.lat, -35.6895) && near(sw.lng, -139.6918333));
+  assert.equal(readExifGPS(makeGpsJpeg(true, { withGps: false })), null);
+  assert.equal(readExifGPS(new Uint8Array([1, 2, 3]).buffer), null);
+  assert.equal(readExifGPS(new ArrayBuffer(0)), null);
+  // readExifDate はそのまま読める（同じ写真から日付と位置の両方を読む想定）
+  assert.equal(readExifDate(makeGpsJpeg(true)), '2024-05-06');
+});
+
+test('matchPhotoStamps: 近くの場所（一覧・近所の両方）に撮影日の判子、同じ日同じ場所はまとめて1つ', () => {
+  const spots = [
+    { id: 'a', lat: 35, lng: 135, radius: 50, tier: 'list' },
+    { id: 'b', lat: 35, lng: 135, radius: 50, tier: 'near' }, // a と同じ場所を指す別の場所データ
+    { id: 'far', lat: 36, lng: 135, radius: 50, tier: 'list' },
+  ];
+  const photos = [
+    { date: '2026-10-10', lat: 35.0001, lng: 135 },
+    { date: '2026-10-10', lat: 35.0001, lng: 135 }, // 同じ日・同じ場所のもう1枚
+    { date: '2026-10-11', lat: 36, lng: 135 },
+    { date: null, lat: 35, lng: 135 }, // 日付が読めない
+    { date: '2026-10-12', lat: 10, lng: 10 }, // 近くに場所がない
+  ];
+  const r = matchPhotoStamps(photos, spots, []);
+  assert.equal(r.matches.length, 3); // a@10-10, b@10-10, far@10-11
+  assert.deepEqual(r.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['a_2026-10-10', 'b_2026-10-10', 'far_2026-10-11']);
+  assert.equal(r.matches.find((m) => m.spotId === 'a').photoIndex, 0); // 1枚目の写真が付く
+  assert.equal(r.withoutLocation, 1);
+  assert.equal(r.withoutSpot, 1);
+  // 既に押してある判子は増やさない
+  const visits = [{ id: 'v1', spotId: 'a', at: new Date('2026-10-10T12:00:00').getTime() }];
+  const r2 = matchPhotoStamps(photos, spots, visits);
+  assert.deepEqual(r2.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['b_2026-10-10', 'far_2026-10-11']);
 });
 
 test('dailyQuests: 徒歩・自転車だけ、範囲内のまだ押していない場所から、同じ日は同じ顔ぶれ', () => {
@@ -370,4 +456,45 @@ test('今日のお題の長さ：15分なら道のりも短く', () => {
   const q60 = dailyQuests(spots, '2026-10-14', 'walk', pos, none, none, 3, 60);
   assert.ok(Math.abs(q15[0].loop - 1250) <= 400, `15分 ${q15[0].loop}m`);
   assert.ok(q60[0].loop > q15[0].loop * 2, `60分 ${q60[0].loop}m`);
+});
+
+test('monthGrid: 週の始まりは日曜、7の倍数のマスになる', () => {
+  // 2026年10月1日は木曜（getDay()===4）。先頭4マスは9月の日になる
+  const g = monthGrid(2026, 10);
+  assert.equal(g.weeks[0].length, 7);
+  assert.equal(g.weeks.flat().length % 7, 0);
+  assert.deepEqual(g.weeks[0].slice(0, 4), [
+    { date: '2026-09-27', inMonth: false },
+    { date: '2026-09-28', inMonth: false },
+    { date: '2026-09-29', inMonth: false },
+    { date: '2026-09-30', inMonth: false },
+  ]);
+  assert.deepEqual(g.weeks[0][4], { date: '2026-10-01', inMonth: true });
+  const last = g.weeks.flat().at(-1);
+  assert.ok(last.date >= '2026-10-31');
+  // 月の全日が1回ずつ、ちょうど出てくる
+  const inMonthDates = g.weeks.flat().filter((c) => c.inMonth).map((c) => c.date);
+  assert.deepEqual(inMonthDates, Array.from({ length: 31 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}`));
+});
+
+test('monthGrid: うるう年の2月は29日、平年は28日', () => {
+  const leap = monthGrid(2024, 2);
+  assert.equal(leap.weeks.flat().filter((c) => c.inMonth).length, 29);
+  const normal = monthGrid(2023, 2);
+  assert.equal(normal.weeks.flat().filter((c) => c.inMonth).length, 28);
+});
+
+test('monthGrid: 1月は前年12月の日を、12月は翌年1月の日をまたぐ', () => {
+  const jan = monthGrid(2026, 1);
+  const firstOut = jan.weeks[0][0];
+  if (!firstOut.inMonth) assert.ok(firstOut.date.startsWith('2025-12'));
+  const dec = monthGrid(2026, 12);
+  const lastOut = dec.weeks.at(-1).at(-1);
+  if (!lastOut.inMonth) assert.ok(lastOut.date.startsWith('2027-01'));
+});
+
+test('shiftMonth: 年をまたぐ', () => {
+  assert.deepEqual(shiftMonth(2026, 1, -1), { year: 2025, month: 12 });
+  assert.deepEqual(shiftMonth(2026, 12, 1), { year: 2027, month: 1 });
+  assert.deepEqual(shiftMonth(2026, 10, 1), { year: 2026, month: 11 });
 });

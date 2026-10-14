@@ -3,8 +3,9 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
+  monthGrid, shiftMonth,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
@@ -82,6 +83,10 @@ function imgFor(photoId, cls) {
   return img;
 }
 function dropPhotoCache() { for (const u of urls.values()) URL.revokeObjectURL(u); urls.clear(); }
+// 判子に写真が付いているとき、判子の文字の代わりに丸く切り抜いた写真を敷く（色の枠は残す）
+function attachPhotoBg(el, photoId) {
+  photoSrc(photoId).then((u) => { if (u) { el.style.backgroundImage = `url("${u}")`; el.style.backgroundSize = 'cover'; el.style.backgroundPosition = 'center'; } });
+}
 
 // 位置情報（15秒以内の結果は使い回す）
 function getPos(timeout = 6000, force = false) {
@@ -347,19 +352,35 @@ function markPassed(pos, cands) {
   if (changed) { try { localStorage.setItem('tabigoyomi.passed', JSON.stringify(p)); } catch { /* 保存できなくても続ける */ } }
 }
 
+// 季節＝赤、名所＝紺、近所＝緑、道の駅＝茶。empty（まだ押していない）判定は呼び出し側で別に OFF_COLOR を使う
+function stampColor(spot, isSeason) {
+  const road = !isSeason && (spot.lists || []).length > 0 && spot.lists.every((l) => l === 'michinoeki');
+  return isSeason ? SEAL_COLOR : road ? ROAD_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
+}
+// その場所に付いた写真のうち一番新しいもの（写真の取り込み・記録でセットした印の photoId）。なければ null
+function latestPhotoForSpot(spotId) {
+  let best = null;
+  for (const s of state.seals) {
+    if (s.spotId !== spotId || !s.photoId) continue;
+    if (!best || s.at > best.at) best = s;
+  }
+  return best;
+}
 function hankoIcon(spot) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
   // 季節の名所は、見頃の月だけ赤。見頃でない月にまだ押していなければ灰色（見頃でないのに赤く出ていて紛らわしかった）
   const off = isSeason && !mine.length && !seasonOf(spot, now());
-  // 道の駅だけの場所は名所ではないので、別の色にする
-  const road = !isSeason && (spot.lists || []).length > 0 && spot.lists.every((l) => l === 'michinoeki');
-  const color = off ? OFF_COLOR : isSeason ? SEAL_COLOR : road ? ROAD_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
+  const color = off ? OFF_COLOR : stampColor(spot, isSeason);
   const went = !mine.length && !!passed()[spot.id];
   const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
+  // 押した場所に写真が付いていれば、文字の代わりに丸く切り抜いた写真を敷く（枠の色はそのまま残す）
+  const photoSeal = mine.length ? latestPhotoForSpot(spot.id) : null;
+  const face = photoSeal ? h('div', { class: 'face photo' }) : h('div', { class: 'face' }, h('span', {}, mark));
+  if (photoSeal) attachPhotoBg(face, photoSeal.photoId);
   const node = mine.length
-    ? h('div', { class: cls, style: `--c:${color}` }, h('div', { class: 'face' }, h('span', {}, mark)), mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
+    ? h('div', { class: cls, style: `--c:${color}` }, face, mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
     : h('div', { class: cls, style: `--c:${color}` }, h('span', { class: 'g' }, mark));
   return L.divIcon({ className: 'hanko-wrap', html: node, iconSize: [40, 40], iconAnchor: [20, 20] });
 }
@@ -1269,15 +1290,75 @@ function openSettings() {
   ]);
 }
 
-// ---------- 日記 ----------
-function openDiary() {
+// ---------- 日記（カレンダー） ----------
+// 小さな判子（地図・帳面と同じ色・かすれ）。写真が付いていれば文字の代わりにその写真を丸く（季節は角丸）切り抜く
+function miniHanko({ color, glyph, square, photoId }) {
+  const el = h('div', { class: 'minihanko' + (square ? ' square' : '') + (photoId ? ' photo' : ''), style: `--c:${color}` }, photoId ? null : glyph);
+  if (photoId) attachPhotoBg(el, photoId);
+  return el;
+}
+// その判子（visit）に付いた写真（写真の取り込み・記録でセットした印の photoId）。なければ null
+const sealPhotoForVisit = (visitId) => state.seals.find((s) => s.visitId === visitId && s.photoId) || null;
+// その日の、小さな判子にする項目（判子＝visits、ご当地＝meals）
+function dayStampItems(d) {
+  const items = d.visits.map((v) => {
+    const s = spotById(v.spotId);
+    const seal = sealPhotoForVisit(v.id);
+    const mark = v.seasonal ? ((s && s.seasons && s.seasons[0] && s.seasons[0].mark) || glyphOf(s ? s.name : '?')) : glyphOf(s ? s.name : '?');
+    return { color: stampColor(s || {}, v.seasonal), glyph: mark, square: !!v.seasonal, photoId: seal ? seal.photoId : null };
+  });
+  for (const m of d.meals) items.push({ color: FOOD_COLOR, glyph: glyphOf(m.name), square: false, photoId: m.photoId || null });
+  return items;
+}
+function diaryDays() {
   const days = groupByDay(state.visits, state.seals, state.meals);
   // 判子がなく、歩いた距離だけある日も出す
   for (const day of Object.keys(dist.days)) if (distText(dist.days[day]) && !days.some((d) => d.date === day)) days.push({ date: day, visits: [], seals: [], meals: [] });
-  days.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  showSheet(openDiary, [
+  return new Map(days.map((d) => [d.date, d]));
+}
+let diaryYM = null; // 表示中の月 { year, month }。null なら今月
+let diaryDay = null; // 開いている日（'YYYY-MM-DD'）。null ならカレンダー
+function openDiary() {
+  if (!diaryYM) { const d = now(); diaryYM = { year: d.getFullYear(), month: d.getMonth() + 1 }; }
+  showSheet(openDiary, diaryDay ? diaryDayNodes(diaryDay) : diaryCalendarNodes());
+}
+function diaryCalendarNodes() {
+  const { year, month } = diaryYM;
+  const grid = monthGrid(year, month);
+  const today = todayStr(now());
+  const byDate = diaryDays();
+  const cell = (c) => {
+    const d = byDate.get(c.date) || { date: c.date, visits: [], seals: [], meals: [] };
+    const items = dayStampItems(d);
+    const shown = items.slice(0, 3);
+    const extra = items.length - shown.length;
+    const onlyMemo = !items.length && d.seals.length > 0;
+    return h('button', {
+      class: 'calday' + (c.inMonth ? '' : ' out') + (c.date === today ? ' today' : ''), type: 'button', 'data-date': c.date,
+      onclick: () => { diaryDay = c.date; openDiary(); },
+    },
+      h('span', { class: 'dn' }, String(Number(c.date.slice(8, 10)))),
+      items.length ? h('span', { class: 'stamps' }, shown.map(miniHanko), extra > 0 ? h('span', { class: 'more' }, `+${extra}`) : null)
+        : onlyMemo ? h('span', { class: 'dot' }) : null);
+  };
+  return [
     h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '日記'),
-    days.length ? days.map((d) => h('section', { class: 'day' },
+    h('button', { class: 'btn', type: 'button', style: 'margin-bottom:10px', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+    h('div', { class: 'calhead' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, -1); openDiary(); }, 'aria-label': '前の月' }, '‹'),
+      h('h3', {}, `${year}年${month}月`),
+      h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, 1); openDiary(); }, 'aria-label': '次の月' }, '›')),
+    h('div', { class: 'calwd' }, [...'日月火水木金土'].map((w) => h('span', {}, w))),
+    h('div', { class: 'calgrid' }, grid.weeks.flat().map(cell)),
+    h('p', { class: 'muted', style: 'font-size:12px;margin-top:10px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。'),
+  ];
+}
+function diaryDayNodes(date) {
+  const d = diaryDays().get(date) || { date, visits: [], seals: [], meals: [] };
+  const empty = !d.visits.length && !d.seals.length && !d.meals.length && !distText(dist.days[date]);
+  return [
+    h('button', { class: 'btn', type: 'button', style: 'margin-bottom:10px', onclick: () => { diaryDay = null; openDiary(); } }, '‹ カレンダーへ'),
+    h('section', { class: 'day' },
       h('h3', {}, fmtDate(d.date)),
       distText(dist.days[d.date]) ? h('p', { class: 'muted', style: 'margin:0 0 6px' }, `移動：${distText(dist.days[d.date])}`) : null,
       d.visits.map((v) => {
@@ -1287,10 +1368,12 @@ function openDiary() {
           h('span', {}, `${s ? s.name : v.spotId}${v.seasonal ? '　季節の判子' : ''}`),
           h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || ''));
       }),
-      d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true)))))
-      : h('p', { class: 'muted' }, 'まだ記録がありません。'),
-    h('p', { class: 'muted', style: 'font-size:12px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。'),
-  ]);
+      d.meals.map((m) => h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto'), style: 'margin-top:6px' },
+        m.photoId ? imgFor(m.photoId, 'ph') : null,
+        h('div', {}, h('div', { class: 't' }, `ご当地　${m.name}`), m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null))),
+      d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true))),
+      empty ? h('p', { class: 'muted' }, 'まだ記録がありません。') : null),
+  ];
 }
 
 // ---------- 印を記録する ----------
@@ -1375,6 +1458,7 @@ function openRecord() {
   showSheet(null, [h('div', { class: 'form' },
     h('h2', { style: 'font-size:20px' }, '記録する'),
     h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。御朱印などの印をいただいたら、種類を選んでください。'),
+    h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '種類'), chips),
     h('label', { class: 'f' }, '日付', date),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },
@@ -1393,6 +1477,100 @@ function openRecord() {
     h('label', { class: 'f' }, 'ひとこと', note),
     foodHint,
     save)]);
+}
+
+// ---------- 写真からまとめて判子 ----------
+// 写真をまとめて選ぶ→確かめる画面なしで、撮影日・撮影位置から当てはまる判子を全部押す。
+// 押した分には importId を付けておき、「まとめて取り消す」でその回の分だけ外せるようにする。
+function pickPhotosForImport() {
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
+    const files = [...e.target.files];
+    input.remove();
+    if (files.length) await runPhotoImport(files);
+  } });
+  document.body.append(input);
+  input.click();
+}
+
+async function runPhotoImport(files) {
+  toast(`${files.length}枚を調べています…`);
+  const photos = [];
+  for (const file of files) {
+    let date = null; let lat = null; let lng = null;
+    try {
+      const buf = await file.arrayBuffer();
+      date = readExifDate(buf);
+      const gps = readExifGPS(buf); // HEIC など読めない形式は null のまま（位置なし扱い）
+      if (gps) { lat = gps.lat; lng = gps.lng; }
+    } catch { /* 読めない写真は位置なし扱いで続ける */ }
+    photos.push({ file, date, lat, lng });
+  }
+  // 写真の位置の近くの区画を読み込んでおく（地図を開いていない場所でも判定できるように）
+  const margin = 0.03;
+  const keys = new Set();
+  for (const p of photos) {
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
+    for (const k of tilesForBounds(p.lat - margin, p.lng - margin, p.lat + margin, p.lng + margin)) keys.add(k);
+  }
+  await ensureTiles([...keys]);
+  const spots = [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+  const { matches, withoutLocation, withoutSpot } = matchPhotoStamps(photos, spots, state.visits);
+  if (!matches.length) {
+    toast(withoutLocation || withoutSpot
+      ? `判子は付きませんでした（位置や日付が分からない写真 ${withoutLocation}枚、近くに場所がない写真 ${withoutSpot}枚）`
+      : '判子は付きませんでした');
+    return;
+  }
+  const importId = db.newId();
+  const placeSet = new Set();
+  const blobCache = new Map();
+  for (const m of matches) {
+    const spot = spotById(m.spotId);
+    if (!spot) continue;
+    const photo = photos[m.photoIndex];
+    let photoId = null;
+    try {
+      if (!blobCache.has(m.photoIndex)) blobCache.set(m.photoIndex, await resizePhoto(photo.file));
+      photoId = db.newId();
+      await db.put('photos', { id: photoId, blob: blobCache.get(m.photoIndex) });
+    } catch { /* 写真が保存できなくても判子は付ける */ }
+    const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${m.date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'photo', importId };
+    await db.put('visits', visit);
+    const seal = { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: m.date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId };
+    await db.put('seals', seal);
+    placeSet.add(spot.id);
+  }
+  await loadData();
+  render();
+  showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+}
+
+function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId) {
+  toast(`${photoCount}枚から${placeCount}か所に判子。`);
+  const extra = [
+    withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
+    withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
+  ].filter(Boolean).join('・');
+  showSheet(null, [
+    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '写真から判子'),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`),
+    h('div', { style: 'display:flex;gap:8px;justify-content:center' },
+      h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す'),
+      h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
+  ], () => sheetEl.classList.add('small'));
+}
+
+async function undoImport(importId) {
+  const [visits, seals] = await Promise.all([db.getAll('visits'), db.getAll('seals')]);
+  for (const s of seals) {
+    if (s.importId !== importId) continue;
+    if (s.photoId) await db.remove('photos', s.photoId);
+    await db.remove('seals', s.id);
+  }
+  for (const v of visits) if (v.importId === importId) await db.remove('visits', v.id);
+  await loadData();
+  render();
+  toast('取り消しました');
 }
 
 // ---------- データを守る ----------
