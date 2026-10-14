@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1752,14 +1752,16 @@ async function runPhotoImport(files) {
   toast(`${files.length}枚を調べています…`);
   const photos = [];
   for (const file of files) {
-    let date = null; let lat = null; let lng = null;
+    let date = null; let lat = null; let lng = null; let exif = false; let err = '';
     try {
       const buf = await file.arrayBuffer();
+      const v = new DataView(buf);
+      exif = v.byteLength >= 4 && (v.getUint16(0) === 0xffd8 ? new Uint8Array(buf, 0, Math.min(buf.byteLength, 128 * 1024)).some((b, i, a) => b === 0x45 && a[i + 1] === 0x78 && a[i + 2] === 0x69 && a[i + 3] === 0x66) : findTiffStart(v) >= 0);
       date = readExifDate(buf);
-      const gps = readExifGPS(buf); // HEIC など読めない形式は null のまま（位置なし扱い）
+      const gps = readExifGPS(buf); // 位置が消されている写真は null のまま（位置なし扱い）
       if (gps) { lat = gps.lat; lng = gps.lng; }
-    } catch { /* 読めない写真は位置なし扱いで続ける */ }
-    photos.push({ file, date, lat, lng });
+    } catch (e) { err = String(e && e.message || e); /* 読めない写真は位置なし扱いで続ける */ }
+    photos.push({ file, date, lat, lng, exif, err });
   }
   const spots = await spotsAround(photos, 0.03);
   const { matches, withoutLocation, withoutSpot, nearest } = matchPhotoStamps(photos, spots, state.visits);
@@ -1769,9 +1771,14 @@ async function runPhotoImport(files) {
     if (withoutLocation) lines.push(`位置か日付が読めなかった写真：${withoutLocation}枚。写真を選ぶ画面の左下「オプション」で「位置情報」をオンにすると読めます。`);
     if (withoutSpot) lines.push(`近くに判子の場所がなかった写真：${withoutSpot}枚。${nearest ? `いちばん近かったのは「${nearest.name}」で ${fmtDist(nearest.distance)} でした（${PHOTO_SLACK_METERS + 50}m くらいまでなら押せます）。` : ''}`);
     if (!withoutLocation && !withoutSpot) lines.push('写真の日付の判子は、もう押してありました。');
+    // 写真ごとに何が読めたか（原因を調べるため。ファイル名・形式・大きさ・EXIF・日付・位置）
+    const detail = h('details', { style: 'margin:4px 0 8px' }, h('summary', { class: 'muted', style: 'cursor:pointer' }, 'くわしく（写真ごとに読めたもの）'),
+      h('ul', { class: 'muted', style: 'font-size:12px;padding-left:18px;margin:6px 0 0;word-break:break-all' }, photos.slice(0, 20).map((p) => h('li', {},
+        `${p.file.name || '(名前なし)'}・${p.file.type || '形式不明'}・${(p.file.size / 1048576).toFixed(1)}MB・EXIF ${p.exif ? 'あり' : 'なし'}・日付 ${p.date || 'なし'}・位置 ${Number.isFinite(p.lat) ? 'あり' : 'なし'}${p.err ? `・エラー ${p.err}` : ''}`))));
     showSheet(null, [
       h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '判子は付きませんでした'),
       ...lines.map((t) => h('p', { class: 'sub', style: 'margin:0 0 8px' }, t)),
+      detail,
       h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:6px', onclick: closeSheet }, '閉じる'),
     ], () => sheetEl.classList.add('small'));
     return;

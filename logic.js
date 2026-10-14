@@ -497,7 +497,7 @@ export function sealDraft({ spotId, visits = [], spotById, pos, acc, now = new D
 // JPEG 以外（iPhone の HEIC など）の EXIF：ファイルの中から「Exif  」＋TIFF の頭（II*  / MM *）を探して、その位置を返す。
 // HEIC は箱（ISOBMFF）の中に EXIF をそのまま持っているので、箱をたどらなくても見つかる
 export function findTiffStart(v) {
-  const n = Math.min(v.byteLength, 8 * 1024 * 1024) - 10;
+  const n = v.byteLength - 10; // 大きな HEIC は EXIF が後ろの方にあることがあるので、全体を探す
   for (let i = 0; i < n; i++) {
     if (v.getUint8(i) !== 0x45 || v.getUint32(i) !== 0x45786966 || v.getUint16(i + 4) !== 0) continue; // 'Exif' 00 00
     const o = v.getUint16(i + 6);
