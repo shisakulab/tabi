@@ -599,11 +599,14 @@ function exifGpsFrom(v, t, end) {
 // 同じ日・同じ場所はまとめて1つ（この一括の中の重複も、既に押してある判子も、どちらも増やさない）
 // 返り値：matches（{ spotId, date, photoIndex }の配列。photoIndex はその判子に付ける写真の最初の1枚）、
 //         withoutLocation（位置か日付が読めなかった写真の数）、withoutSpot（位置はあるが近くに場所がなかった写真の数）
-export function matchPhotoStamps(photos, spots, visits) {
+// 写真は少し離れた所から撮ることが多いので、判子の範囲より PHOTO_SLACK_METERS 広く取る（範囲 50m の場所なら 150m 以内）
+export const PHOTO_SLACK_METERS = 100;
+export function matchPhotoStamps(photos, spots, visits, slack = PHOTO_SLACK_METERS) {
   const matches = [];
   const seen = new Set();
   let withoutLocation = 0;
   let withoutSpot = 0;
+  let nearest = null; // 判子が付かなかった写真から、いちばん近かった場所 { name, distance }（理由を伝えるため）
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
     if (!p || !p.date || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) { withoutLocation++; continue; }
@@ -612,7 +615,11 @@ export function matchPhotoStamps(photos, spots, visits) {
       if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
       // 緯度の差だけで明らかに遠いものは先に外す（経路は点が多いので、距離の計算を減らす）
       if (Math.abs(p.lat - spot.lat) * 111195 > Math.max(CHECKIN_METERS, Number(spot.radius) || 0)) continue;
-      if (!canStamp(spot, distanceMeters(p, spot), undefined)) continue;
+      const d = distanceMeters(p, spot);
+      if (!canStamp(spot, Math.max(0, d - slack), undefined)) {
+        if (!nearest || d < nearest.distance) nearest = { name: spot.name, distance: d };
+        continue;
+      }
       any = true;
       const key = `${spot.id}_${p.date}`;
       if (seen.has(key) || stampedOn(visits, spot.id, new Date(`${p.date}T12:00:00`))) continue;
@@ -621,7 +628,7 @@ export function matchPhotoStamps(photos, spots, visits) {
     }
     if (!any) withoutSpot++;
   }
-  return { matches, withoutLocation, withoutSpot };
+  return { matches, withoutLocation, withoutSpot, nearest: matches.length ? null : nearest };
 }
 
 // ---------- GPX（経路）からまとめて判子 ----------

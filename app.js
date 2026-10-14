@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, parseGpx, gpxStops, gpxDayDistances, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1623,6 +1623,19 @@ function openRecord() {
 // 写真をまとめて選ぶ→確かめる画面なしで、撮影日・撮影位置から当てはまる判子を全部押す。
 // 押した分には importId を付けておき、「まとめて取り消す」でその回の分だけ外せるようにする。
 function pickPhotosForImport() {
+  showSheet(null, [
+    h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '写真からまとめて判子'),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, '旅の写真をまとめて選ぶと、写真の撮影日と撮影場所から、その日に行った場所へ判子を押します。確かめる画面はなく、あとで「まとめて取り消す」で外せます。'),
+    h('ul', { class: 'welcome' },
+      h('li', {}, '次に出るメニューで「写真ライブラリ」を選びます'),
+      h('li', {}, '写真を指でなぞると、まとめて選べます。選んだら「オプション」で「位置情報」をオンにしてから「追加」'),
+      h('li', {}, '判子の場所から150mくらいまでの写真なら押せます。読むのは撮影日と撮影場所だけで、写真はこの端末の外に送りません')),
+    h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => { closeSheet(); pickPhotoFiles(); } }, '写真を選ぶ'),
+      h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'やめる')),
+  ]);
+}
+function pickPhotoFiles() {
   const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
     const files = [...e.target.files];
     input.remove();
@@ -1646,11 +1659,18 @@ async function runPhotoImport(files) {
     photos.push({ file, date, lat, lng });
   }
   const spots = await spotsAround(photos, 0.03);
-  const { matches, withoutLocation, withoutSpot } = matchPhotoStamps(photos, spots, state.visits);
+  const { matches, withoutLocation, withoutSpot, nearest } = matchPhotoStamps(photos, spots, state.visits);
   if (!matches.length) {
-    toast(withoutLocation || withoutSpot
-      ? `判子は付きませんでした（位置や日付が分からない写真 ${withoutLocation}枚、近くに場所がない写真 ${withoutSpot}枚）`
-      : '判子は付きませんでした');
+    // 理由が分かるように、トーストではなく画面で出す
+    const lines = [];
+    if (withoutLocation) lines.push(`位置か日付が読めなかった写真：${withoutLocation}枚。写真を選ぶ画面の左下「オプション」で「位置情報」をオンにすると読めます。`);
+    if (withoutSpot) lines.push(`近くに判子の場所がなかった写真：${withoutSpot}枚。${nearest ? `いちばん近かったのは「${nearest.name}」で ${fmtDist(nearest.distance)} でした（${PHOTO_SLACK_METERS + 50}m くらいまでなら押せます）。` : ''}`);
+    if (!withoutLocation && !withoutSpot) lines.push('写真の日付の判子は、もう押してありました。');
+    showSheet(null, [
+      h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '判子は付きませんでした'),
+      ...lines.map((t) => h('p', { class: 'sub', style: 'margin:0 0 8px' }, t)),
+      h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:6px', onclick: closeSheet }, '閉じる'),
+    ], () => sheetEl.classList.add('small'));
     return;
   }
   const importId = db.newId();
@@ -1750,7 +1770,7 @@ async function runGpxImport(files) {
   }
   await saveDist();
   const spots = await spotsAround(dated, 0.005);
-  const { matches } = matchPhotoStamps(dated, spots, state.visits);
+  const { matches } = matchPhotoStamps(dated, spots, state.visits, 0); // 経路は通っただけなので、写真のように範囲を広げない
   if (!matches.length) { toast('経路の近くに判子の場所はありませんでした'); return; }
   const importId = db.newId();
   const placeSet = new Set();
@@ -1865,8 +1885,8 @@ function openImportAsk(done) {
   showSheet(null, [
     h('h2', { style: 'font-size:22px;margin:4px 0 8px;text-align:center' }, 'これまでの旅も判子にしますか？'),
     h('p', { class: 'sub', style: 'margin:0 0 10px' }, 'スマホの写真の撮影場所と日付から、行った場所にまとめて判子を押します。確かめる画面はなく、あとで「まとめて取り消す」で外せます。写真は端末の外に送りません。'),
-    h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次に出るメニューで「写真ライブラリ」を選び、旅の写真を指でなぞってまとめて選んで「追加」を押してください（多いほど判子が増えます）。読むのは撮影日と撮影場所だけです。'),
-    h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickPhotosForImport) }, '写真から判子を押す'),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次に出るメニューで「写真ライブラリ」を選び、旅の写真を指でなぞってまとめて選びます。「オプション」で「位置情報」をオンにしてから「追加」を押してください（多いほど判子が増えます）。読むのは撮影日と撮影場所だけです。'),
+    h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickPhotoFiles) }, '写真から判子を押す'),
     h('button', { class: 'btn', type: 'button', style: 'width:100%', onclick: () => go(null) }, 'あとで（設定の歯車からいつでも）'),
   ], () => sheetEl.classList.add('small'));
 }
