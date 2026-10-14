@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, parseGpx, gpxStops, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1343,7 +1343,9 @@ function diaryCalendarNodes() {
   };
   return [
     h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '日記'),
-    h('button', { class: 'btn', type: 'button', style: 'margin-bottom:10px', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+    h('div', { style: 'display:flex;gap:8px;margin-bottom:10px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から')),
     h('div', { class: 'calhead' },
       h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, -1); openDiary(); }, 'aria-label': '前の月' }, '‹'),
       h('h3', {}, `${year}年${month}月`),
@@ -1458,7 +1460,9 @@ function openRecord() {
   showSheet(null, [h('div', { class: 'form' },
     h('h2', { style: 'font-size:20px' }, '記録する'),
     h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。御朱印などの印をいただいたら、種類を選んでください。'),
-    h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+    h('div', { style: 'display:flex;gap:8px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から')),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '種類'), chips),
     h('label', { class: 'f' }, '日付', date),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },
@@ -1505,15 +1509,7 @@ async function runPhotoImport(files) {
     } catch { /* 読めない写真は位置なし扱いで続ける */ }
     photos.push({ file, date, lat, lng });
   }
-  // 写真の位置の近くの区画を読み込んでおく（地図を開いていない場所でも判定できるように）
-  const margin = 0.03;
-  const keys = new Set();
-  for (const p of photos) {
-    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
-    for (const k of tilesForBounds(p.lat - margin, p.lng - margin, p.lat + margin, p.lng + margin)) keys.add(k);
-  }
-  await ensureTiles([...keys]);
-  const spots = [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+  const spots = await spotsAround(photos, 0.03);
   const { matches, withoutLocation, withoutSpot } = matchPhotoStamps(photos, spots, state.visits);
   if (!matches.length) {
     toast(withoutLocation || withoutSpot
@@ -1545,19 +1541,78 @@ async function runPhotoImport(files) {
   showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
 }
 
+// 点（{ lat, lng }）の近くの区画を読み込んで、判定に使う場所を返す（地図を開いていない場所でも判定できるように）
+async function spotsAround(points, margin) {
+  const keys = new Set();
+  for (const p of points) {
+    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
+    for (const k of tilesForBounds(p.lat - margin, p.lng - margin, p.lat + margin, p.lng + margin)) keys.add(k);
+  }
+  await ensureTiles([...keys]);
+  return [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+}
+
 function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId) {
   toast(`${photoCount}枚から${placeCount}か所に判子。`);
   const extra = [
     withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
     withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
   ].filter(Boolean).join('・');
+  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId);
+}
+
+function showImportSheet(title, text, importId) {
   showSheet(null, [
-    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '写真から判子'),
-    h('p', { class: 'sub', style: 'margin:0 0 14px' }, `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`),
+    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, title),
+    h('p', { class: 'sub', style: 'margin:0 0 14px' }, text),
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
       h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す'),
       h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
   ], () => sheetEl.classList.add('small'));
+}
+
+// ---------- 経路（GPX）からまとめて判子 ----------
+// Strava・ヘルスケアの経路などの GPX を選ぶ→通った場所に、その日の判子を確かめる画面なしで全部押す（写真と同じく、まとめて取り消せる）
+function pickGpxForImport() {
+  // iPhone は accept に拡張子だけだと選べないことがあるので、XML の型も並べる
+  const input = h('input', { type: 'file', accept: '.gpx,application/gpx+xml,application/xml,text/xml', multiple: true, hidden: true, onchange: async (e) => {
+    const files = [...e.target.files];
+    input.remove();
+    if (files.length) await runGpxImport(files);
+  } });
+  document.body.append(input);
+  input.click();
+}
+
+async function runGpxImport(files) {
+  toast(`${files.length}件の経路を調べています…`);
+  let points = [];
+  for (const file of files) {
+    try { points = points.concat(parseGpx(await file.text())); } catch { /* 読めないファイルは飛ばす */ }
+  }
+  if (!points.length) { toast('経路の点が見つかりませんでした（GPX のファイルか確かめてください）'); return; }
+  const stops = gpxStops(points);
+  const dated = stops.filter((p) => p.date);
+  if (!dated.length) { toast('経路に日時が入っていないため、判子は付けられませんでした'); return; }
+  const spots = await spotsAround(dated, 0.005);
+  const { matches } = matchPhotoStamps(dated, spots, state.visits);
+  if (!matches.length) { toast('経路の近くに判子の場所はありませんでした'); return; }
+  const importId = db.newId();
+  const placeSet = new Set();
+  const days = new Set();
+  for (const m of matches) {
+    const spot = spotById(m.spotId);
+    if (!spot) continue;
+    const stop = dated[m.photoIndex];
+    const visit = { id: db.newId(), spotId: spot.id, at: stop.time, lat: stop.lat, lng: stop.lng, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'gpx', importId };
+    await db.put('visits', visit);
+    placeSet.add(spot.id);
+    days.add(m.date);
+  }
+  await loadData();
+  render();
+  toast(`経路から${placeSet.size}か所に判子。`);
+  showImportSheet('経路から判子', `${files.length}件の経路（${days.size}日分）から、通った${placeSet.size}か所に判子を付けました。`, importId);
 }
 
 async function undoImport(importId) {

@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -497,4 +497,30 @@ test('shiftMonth: 年をまたぐ', () => {
   assert.deepEqual(shiftMonth(2026, 1, -1), { year: 2025, month: 12 });
   assert.deepEqual(shiftMonth(2026, 12, 1), { year: 2027, month: 1 });
   assert.deepEqual(shiftMonth(2026, 10, 1), { year: 2026, month: 11 });
+});
+
+test('parseGpx: trkpt・wpt の位置と時刻、属性の順番違い・時刻なしは metadata の時刻', () => {
+  const gpx = `<?xml version="1.0"?><gpx xmlns="http://www.topografix.com/GPX/1/1"><metadata><time>2026-10-01T00:00:00Z</time></metadata>
+    <wpt lon="135.1" lat="35.1"><name>x</name></wpt>
+    <trk><trkseg><trkpt lat="35" lon="135"><ele>3</ele><time>2026-10-10T03:00:00Z</time></trkpt>
+    <trkpt lat='35.001' lon='135'/><trkpt lat="999" lon="135"></trkpt></trkseg></trk></gpx>`;
+  const p = parseGpx(gpx);
+  assert.equal(p.length, 3); // 緯度がおかしい点は外す
+  assert.deepEqual(p[0], { lat: 35.1, lng: 135.1, time: Date.parse('2026-10-01T00:00:00Z') });
+  assert.equal(p[1].time, Date.parse('2026-10-10T03:00:00Z'));
+  assert.equal(p[2].time, Date.parse('2026-10-01T00:00:00Z'));
+  assert.deepEqual(parseGpx('<gpx><trkpt lat="35" lon="135"></trkpt></gpx>'), [{ lat: 35, lng: 135, time: null }]);
+});
+
+test('gpxStops: 日ごとに20mおきに間引き、時刻なしは日付なし→matchPhotoStamps で判子', () => {
+  const t = new Date('2026-10-10T12:00:00').getTime();
+  const pts = [0, 5, 10, 25, 30, 60, 300].map((m, i) => ({ ...at(m), time: t + i * 1000 }));
+  pts.push({ ...at(0), time: null });
+  const stops = gpxStops(pts);
+  assert.deepEqual(stops.filter((s) => s.date).map((s) => Math.round(distanceMeters(base, s))), [0, 25, 60, 300]);
+  assert.equal(stops.filter((s) => !s.date).length, 1);
+  const spots = [{ id: 'a', ...at(40), radius: 0 }, { id: 'far', ...at(5000), radius: 0 }];
+  const r = matchPhotoStamps(stops, spots, []);
+  assert.deepEqual(r.matches.map((m) => `${m.spotId}_${m.date}`), ['a_2026-10-10']);
+  assert.equal(r.withoutLocation, 1);
 });

@@ -612,6 +612,8 @@ export function matchPhotoStamps(photos, spots, visits) {
     let any = false;
     for (const spot of spots) {
       if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
+      // 緯度の差だけで明らかに遠いものは先に外す（経路は点が多いので、距離の計算を減らす）
+      if (Math.abs(p.lat - spot.lat) * 111195 > Math.max(CHECKIN_METERS, Number(spot.radius) || 0)) continue;
       if (!canStamp(spot, distanceMeters(p, spot), undefined)) continue;
       any = true;
       const key = `${spot.id}_${p.date}`;
@@ -622,4 +624,45 @@ export function matchPhotoStamps(photos, spots, visits) {
     if (!any) withoutSpot++;
   }
   return { matches, withoutLocation, withoutSpot };
+}
+
+// ---------- GPX（経路）からまとめて判子 ----------
+// Strava・ヘルスケアの経路などの GPX から、点（trkpt・rtept・wpt）の { lat, lng, time } を取り出す。
+// time は ms（読めなければ null）。点に時刻がなければ <metadata> の時刻を使う。属性の順番や名前空間の接頭辞は問わない
+export function parseGpx(text) {
+  const src = String(text || '');
+  const timeOf = (s) => { const m = /<(?:\w+:)?time>\s*([^<\s]+)\s*</.exec(s); const t = m ? Date.parse(m[1]) : NaN; return Number.isFinite(t) ? t : null; };
+  const meta = /<(?:\w+:)?metadata\b[\s\S]*?<\/(?:\w+:)?metadata>/.exec(src);
+  const fallback = meta ? timeOf(meta[0]) : null;
+  const points = [];
+  const re = /<(?:\w+:)?(trkpt|rtept|wpt)\b([^>]*?)(\/>|>([\s\S]*?)<\/(?:\w+:)?\1>)/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const attr = (name) => { const a = new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`).exec(m[2]); return a ? Number(a[1]) : NaN; };
+    const lat = attr('lat');
+    const lng = attr('lon');
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    const t = m[4] ? timeOf(m[4]) : null;
+    points.push({ lat, lng, time: t !== null ? t : fallback });
+  }
+  return points;
+}
+
+export const GPX_STEP_METERS = 20; // 判子の範囲（50m〜）を通り過ぎても取りこぼさない間隔
+
+// GPX の点を、日ごとに step メートルおきに間引いて { date, lat, lng, time } にする（matchPhotoStamps にそのまま渡せる形）。
+// 時刻のない点は date: null（位置や日付が分からない扱い）
+export function gpxStops(points, step = GPX_STEP_METERS) {
+  const out = [];
+  const lastByDate = new Map();
+  for (const p of points || []) {
+    const date = Number.isFinite(p.time) ? todayStr(new Date(p.time)) : null;
+    if (!date) { out.push({ date: null, lat: p.lat, lng: p.lng, time: null }); continue; }
+    const last = lastByDate.get(date);
+    if (last && distanceMeters(last, p) < step) continue;
+    const stop = { date, lat: p.lat, lng: p.lng, time: p.time };
+    lastByDate.set(date, stop);
+    out.push(stop);
+  }
+  return out;
 }
