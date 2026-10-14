@@ -765,3 +765,33 @@ export function matchGpxVisits(points, spots, visits, dwellMs = AUTO_DWELL_MS, s
   }
   return { stamps, passed: [...passed.values()] };
 }
+
+// 写真の EXIF に何が入っているか（読めなかったときの原因を調べるため）。
+// { ifd0: タグの数, tags: IFD0 のタグ番号（16進）, exif: 撮影情報の IFD があるか, date: 撮影日時のタグがあるか, gps: GPS の IFD があるか, gpsTags: GPS のタグの数 }
+export function exifSummary(buf) {
+  try {
+    const v = new DataView(buf);
+    let t = -1;
+    if (v.byteLength >= 4 && v.getUint16(0) === 0xffd8) {
+      let p = 2;
+      while (p + 10 <= v.byteLength && v.getUint8(p) === 0xff) {
+        const marker = v.getUint8(p + 1);
+        if (marker === 0xda || marker === 0xd9) break;
+        if (marker === 0xe1 && v.getUint32(p + 4) === 0x45786966 && v.getUint16(p + 8) === 0) { t = p + 10; break; }
+        p += 2 + v.getUint16(p + 2);
+      }
+    } else t = findTiffStart(v);
+    if (t < 0) return null;
+    const le = v.getUint16(t) === 0x4949;
+    const ifd = (off) => {
+      const tags = new Map();
+      const n = v.getUint16(t + off, le);
+      for (let i = 0; i < n && t + off + 2 + i * 12 + 12 <= v.byteLength; i++) { const e = t + off + 2 + i * 12; tags.set(v.getUint16(e, le), v.getUint32(e + 8, le)); }
+      return tags;
+    };
+    const ifd0 = ifd(v.getUint32(t + 4, le));
+    const sub = ifd0.has(0x8769) ? ifd(ifd0.get(0x8769)) : null;
+    const gps = ifd0.has(0x8825) ? ifd(ifd0.get(0x8825)) : null;
+    return { ifd0: ifd0.size, tags: [...ifd0.keys()].map((k) => k.toString(16)), exif: !!sub, date: !!(sub && sub.has(0x9003)) || ifd0.has(0x0132), gps: !!gps, gpsTags: gps ? gps.size : 0 };
+  } catch (e) { return { error: String(e && e.message || e) }; }
+}
