@@ -976,18 +976,19 @@ function openBook() {
   ]);
 }
 
-// 入力中の検索中は本文の DOM を作り直すが、入力欄のフォーカスとカーソル位置は保つ
-function reopenBookKeepFocus() {
-  const active = document.activeElement;
-  const id = active && active.id;
-  const start = active && active.selectionStart;
-  const end = active && active.selectionEnd;
-  openBook();
-  if (!id) return;
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.focus();
-  if (start != null && el.setSelectionRange) { try { el.setSelectionRange(start, end); } catch { /* 対応していない input type では無視 */ } }
+// 検索欄：入力欄はそのままにして、結果だけ描き直す（入力欄ごと作り直すと、iPhone の日本語入力で変換中の文字が壊れていた）。
+// 変換中（isComposing）は描き直さず、確定したときに描き直す
+let refreshSearch = null;
+function searchBox(id, placeholder, value, onQuery, results, extra = {}) {
+  const wrap = h('div', {}, ...results());
+  const run = (e) => { onQuery(e.target.value); wrap.replaceChildren(...results()); };
+  const input = h('input', {
+    id, class: 'search', type: 'search', placeholder, value, autocomplete: 'off', ...extra,
+    oninput: (e) => { if (!e.isComposing) run(e); },
+    oncompositionend: run,
+  });
+  refreshSearch = () => wrap.replaceChildren(...results());
+  return [input, wrap];
 }
 
 function allListSpots() { return [...state.catalog.values(), ...state.seasonSpots]; }
@@ -1055,13 +1056,12 @@ function ensureKana() {
   kanaLoading = true;
   fetchJson('data/kana.json', {}).then((k) => {
     kanaMap = new Map(Object.entries(k).map(([id, w]) => [id, normalizeName(w)]));
-    if (spotQuery && state.tab === 'spots' && !sheetEl.hidden) reopenBookKeepFocus();
+    if (spotQuery && state.tab === 'spots' && !sheetEl.hidden && refreshSearch) refreshSearch();
   });
 }
 function bookSpots() {
   const spots = allListSpots();
-  const q = normalizeName(spotQuery);
-  const sections = state.lists.map((l) => {
+  const sectionsFor = (q) => state.lists.map((l) => {
     const p = listProgress(state.visits, spots, l.key);
     const isSeason = l.key === 'seasons';
     const color = isSeason ? 'var(--seal)' : TIER_COLOR.list;
@@ -1073,14 +1073,10 @@ function bookSpots() {
       barEl(p.count, p.total, color),
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, color, isSeason))));
   }).filter(Boolean);
+  const results = () => { const sections = sectionsFor(normalizeName(spotQuery)); return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')]; };
   return [
     masuDetailPanel(),
-    h('input', {
-      id: 'spotsearch', class: 'search', type: 'search', placeholder: '名前・読み・別名で探す（例：きんかくじ）', value: spotQuery,
-      onfocus: ensureKana,
-      oninput: (e) => { spotQuery = e.target.value; ensureKana(); reopenBookKeepFocus(); },
-    }),
-    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした'),
+    ...searchBox('spotsearch', '名前・読み・別名で探す（例：きんかくじ）', spotQuery, (v) => { spotQuery = v; ensureKana(); }, results, { onfocus: ensureKana }),
     nearSealsSection(),
   ];
 }
@@ -1119,20 +1115,17 @@ function bookFoods() {
   const mains = state.foods.filter((f) => f.main);
   const gotMains = mains.filter((f) => mealsFor(f).length > 0);
   const head = h('div', { class: 'listhead' }, h('b', {}, 'ご当地グルメ'), h('span', { class: 'muted' }, '農林水産省「うちの郷土料理」より'), h('span', { class: 'n' }, `${gotMains.length} / ${mains.length}`));
-  const search = h('input', {
-    id: 'foodsearch', class: 'search', type: 'search', placeholder: '料理名・都道府県名で探す', value: foodQuery,
-    oninput: (e) => { foodQuery = e.target.value; reopenBookKeepFocus(); },
-  });
-  const q = normalizeName(foodQuery);
-  if (q) {
-    const matches = state.foods.filter((f) => [f.name, f.kana, f.pref, ...(f.aliases || [])].some((w) => normalizeName(w).includes(q)));
-    return [head, search, matches.length ? h('div', { class: 'masus' }, matches.map(foodMasu)) : h('p', { class: 'muted' }, '見つかりませんでした')];
-  }
   const ordered = [...mains].sort((a, b) => {
     const ai = PREF_ORDER.indexOf(a.pref); const bi = PREF_ORDER.indexOf(b.pref);
     return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
   });
-  return [head, barEl(gotMains.length, mains.length, FOOD_COLOR), search, h('div', { class: 'masus' }, ordered.map(foodMasu))];
+  const results = () => {
+    const q = normalizeName(foodQuery);
+    if (!q) return [h('div', { class: 'masus' }, ordered.map(foodMasu))];
+    const matches = state.foods.filter((f) => [f.name, f.kana, f.pref, ...(f.aliases || [])].some((w) => normalizeName(w).includes(q)));
+    return [matches.length ? h('div', { class: 'masus' }, matches.map(foodMasu)) : h('p', { class: 'muted' }, '見つかりませんでした')];
+  };
+  return [head, barEl(gotMains.length, mains.length, FOOD_COLOR), ...searchBox('foodsearch', '料理名・都道府県名で探す', foodQuery, (v) => { foodQuery = v; }, results)];
 }
 function foodRecordRow(m) {
   return h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto') },
@@ -1242,8 +1235,7 @@ function bookCountries() {
     return a.localeCompare(b, 'ja');
   });
   const visited = countries.filter((c) => counts[c]);
-  const q = normalizeName(countryQuery);
-  const sections = countries.map((country) => {
+  const sectionsFor = (q) => countries.map((country) => {
     const p = countryProgress(state.visits, spots, country);
     const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || normalizeName(country).includes(q)) : p.cells;
     if (!p.total || !cells.length) return null;
@@ -1255,11 +1247,10 @@ function bookCountries() {
   return [
     masuDetailPanel(),
     h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}`),
-    h('input', {
-      id: 'countrysearch', class: 'search', type: 'search', placeholder: '国名・名前で探す', value: countryQuery,
-      oninput: (e) => { countryQuery = e.target.value; reopenBookKeepFocus(); },
+    ...searchBox('countrysearch', '国名・名前で探す', countryQuery, (v) => { countryQuery = v; }, () => {
+      const sections = sectionsFor(normalizeName(countryQuery));
+      return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')];
     }),
-    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした'),
   ];
 }
 
