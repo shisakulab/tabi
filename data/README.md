@@ -12,6 +12,6 @@
 近所の場所（OSM。Overpass は混んで取れないことが多いので、`tools/osm-extract.py` で Geofabrik の地方ごとのファイルから tools/.cache に作ってから build する。`--no-osm` を付けると入れずに作る）：神社・お寺（amenity=place_of_worship＋religion=shinto/buddhist）、温泉（natural=hot_spring、または amenity=public_bath で bath:type=onsen か名前に「温泉」）、銭湯（それ以外の amenity=public_bath。足湯・私有は除く）、灯台（man_made=lighthouse）、博物館・記念館（tourism=museum）、名所（tourism=attraction、または historic=castle/ruins/monument。historic=memorial は小さな碑が多すぎるので除く）、展望（tourism=viewpoint）、パン屋（shop=bakery）、喫茶店（amenity=cafe。brand・brand:wikidata タグのあるチェーン店は除く）、定食屋（amenity=restaurant/fast_food のうち、名前に「食堂」「定食」などを含むか cuisine に teishoku/set_meal を含むもの。brand・brand:wikidata タグのあるもの、チェーン店名、社員食堂・学食などの名前、支店名だけのものは除く）。node・way だけでなく relation（境内などの複数の囲み）も、メンバー way の点の範囲の中心で入れる。名前のないものは入れない
 
 ## 出典
-場所のデータは [Wikidata](https://www.wikidata.org/)（CC0）と [OpenStreetMap](https://www.openstreetmap.org/copyright)（© OpenStreetMap contributors、ODbL）。地図は国土地理院。
+場所のデータは [Wikidata](https://www.wikidata.org/)（CC0）と [OpenStreetMap](https://www.openstreetmap.org/copyright)（© OpenStreetMap contributors、ODbL）。地図は国土地理院。 帳面の国の地図の国境は [Natural Earth](https://www.naturalearthdata.com/)（パブリックドメイン）の 1:1億（`countries.geojson`。形のない小さな国は点）。
 
 - `foods.json`：ご当地グルメの図鑑。`node tools/build-foods.mjs` で作ります（手で編集しない）。`{ key, name, pref, url, summary, months?, main }` の配列。元データは農林水産省「[うちの郷土料理](https://www.maff.go.jp/j/keikaku/syokubunka/k_ryouri/)」（[政府標準利用規約・PDL1.0](https://www.digital.go.jp/resources/open_data/public_data_license_v1.0)）。summary は料理ページの説明を要約。main は都道府県ごとに2〜3品、全国的に名が通っていて旅先で食べられるものを手で選んだもの

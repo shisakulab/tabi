@@ -137,6 +137,8 @@ async function resizePhoto(file) {
 async function loadData() {
   [state.visits, state.seals, state.meals] = await Promise.all([db.getAll('visits'), db.getAll('seals'), db.getAll('meals')]);
 }
+// Wikidata の国名の揺れを、国境データ（Natural Earth の日本語名）にそろえる
+const COUNTRY_ALIAS = { 'スペイン王国': 'スペイン', 'ノルウェー王国': 'ノルウェー', 'パレスチナ国': 'パレスチナ', 'チェコ共和国': 'チェコ', 'ギニアビサウ共和国': 'ギニアビサウ', 'ローマ帝国': 'ドイツ' };
 const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : fallback)).catch(() => fallback);
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
@@ -148,7 +150,8 @@ async function loadCatalog() {
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
   for (const l of lists.lists) {
-    for (const [id, name, pref, hasCoord, country, lat, lng] of l.items) {
+    for (const [id, name, pref, hasCoord, rawCountry, lat, lng] of l.items) {
+      const country = COUNTRY_ALIAS[rawCountry] || rawCountry;
       // 座標も一覧に持たせる（帳面から、まだ読み込んでいない区画＝遠くや海外の場所を地図で開くため）
       const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, country: country || '日本', lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, lists: [] };
       cur.lists.push(l.key);
@@ -1325,33 +1328,35 @@ function bookCountryDetail(country) {
     sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, 'この国の場所はまだありません'),
   ];
 }
-// 世界地図：国ごとに、その国の場所の真ん中（中央値）に丸を置く。押した国は塗り、数が多いほど大きく。丸を押すとその国へ
-function worldMapEl(countries, counts, spots) {
+// 世界地図：国の形を塗る（行った国は濃く、世界遺産のある国は薄く、ない国は灰色）。国を押すとその国へ。
+// 国境は Natural Earth（パブリックドメイン）の 1:1億。小さすぎて形がない国は同じ大きさの点で出す
+let countryShapes = null;
+function worldMapEl(countries, counts) {
   const el = h('div', { class: 'worldmap' });
-  const pts = new Map();
-  for (const s of spots) {
-    const c = state.catalog.get(s.id);
-    if (!c || !Number.isFinite(c.lat)) continue;
-    if (!pts.has(c.country)) pts.set(c.country, []);
-    pts.get(c.country).push(c);
-  }
-  const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
+  const has = new Set(countries);
+  const go = (country) => { countryDetail = country; masuDetail = null; openBook(); sheetBody.scrollTop = 0; };
+  const draw = (geo) => {
+    if (!el.isConnected || !geo) return;
+    const map = L.map(el, { center: [25, 15], zoom: 1, minZoom: 1, maxZoom: 6, zoomControl: false, attributionControl: true, worldCopyJump: true, zoomSnap: 0.25 });
+    state.maps.push(map);
+    map.attributionControl.setPrefix('').addAttribution('Natural Earth');
+    const styleOf = (n) => (counts[n] ? { color: '#fff', weight: 0.6, fillColor: TIER_COLOR.list, fillOpacity: 0.9 }
+      : has.has(n) ? { color: '#fff', weight: 0.6, fillColor: TIER_COLOR.list, fillOpacity: 0.45 }
+        : { color: '#fff', weight: 0.6, fillColor: '#9aa5a7', fillOpacity: 0.2 });
+    L.geoJSON(geo, {
+      style: (f) => styleOf(f.properties.n),
+      pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 5, ...styleOf(f.properties.n), color: has.has(f.properties.n) ? TIER_COLOR.list : '#9aa5a7', weight: 1 }),
+      onEachFeature: (f, layer) => {
+        const n = f.properties.n;
+        layer.bindTooltip(`${n}${counts[n] ? `（判子 ${counts[n]}）` : ''}`, { sticky: true });
+        if (has.has(n)) layer.on('click', () => go(n));
+      },
+    }).addTo(map);
+    map.fitBounds([[-50, -165], [72, 180]]);
+  };
   setTimeout(() => {
-    if (!el.isConnected) return;
-    const map = makeMap(el, { center: [30, 20], zoom: 1, minZoom: 1, maxZoom: 6, zoomControl: false, attributionControl: true, worldCopyJump: true });
-    map.setView([30, 20], 1);
-    for (const country of countries) {
-      const list = pts.get(country);
-      if (!list || !list.length) continue;
-      const got = counts[country] || 0;
-      const m = L.circleMarker([median(list.map((x) => x.lat)), median(list.map((x) => x.lng))], {
-        radius: Math.min(14, 4 + Math.sqrt(list.length) * 1.2), weight: got ? 2 : 1,
-        color: got ? '#fff' : TIER_COLOR.list, fillColor: TIER_COLOR.list, fillOpacity: got ? 0.95 : 0.15,
-      }).addTo(map);
-      m.bindTooltip(`${country}${got ? `（${got}）` : ''}`, { direction: 'top' });
-      m.on('click', () => { countryDetail = country; masuDetail = null; openBook(); sheetBody.scrollTop = 0; });
-    }
-    map.invalidateSize();
+    if (countryShapes) draw(countryShapes);
+    else fetchJson('data/countries.geojson', null).then((g) => { countryShapes = g; draw(g); });
   }, 0);
   return el;
 }
@@ -1378,8 +1383,8 @@ function bookCountries() {
   }).filter(Boolean);
   return [
     masuDetailPanel(),
-    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}（丸を押すとその国へ）`),
-    worldMapEl(countries, counts, spots),
+    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}（国を押すとその国へ。濃い色＝判子あり、薄い色＝世界遺産あり）`),
+    worldMapEl(countries, counts),
     ...searchBox('countrysearch', '国名・名前で探す', countryQuery, (v) => { countryQuery = v; }, () => {
       const sections = sectionsFor(normalizeName(countryQuery));
       return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')];

@@ -29,6 +29,7 @@ node tools/build-foods.mjs   # ご当地グルメのデータを作り直す（�
 動作確認用に、`?date=2026-11-12` を付けると今日の日付を差し替えられます。
 
 ## 出典
+- 帳面の国の地図の国境：[Natural Earth](https://www.naturalearthdata.com/)（パブリックドメイン）
 - 地図：[国土地理院](https://maps.gsi.go.jp/development/ichiran.html)（淡色地図）
 - 場所のデータ：[Wikidata](https://www.wikidata.org/)（CC0）。詳しくは `data/README.md`
 - ご当地グルメのデータ：農林水産省「[うちの郷土料理](https://www.maff.go.jp/j/keikaku/syokubunka/k_ryouri/)」（政府標準利用規約・PDL1.0。一部を要約して利用）
