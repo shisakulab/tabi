@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
@@ -141,10 +141,10 @@ async function loadCatalog() {
   ]);
   state.foods = foods;
   state.tileCounts = meta.tileCounts || {};
-  state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note }));
+  state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
   for (const l of lists.lists) {
-    for (const [id, name, pref, hasCoord] of l.items) {
-      const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, lists: [] };
+    for (const [id, name, pref, hasCoord, country] of l.items) {
+      const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, country: country || '日本', lists: [] };
       cur.lists.push(l.key);
       state.catalog.set(id, cur);
     }
@@ -154,7 +154,7 @@ async function loadCatalog() {
     const lat = Number.isFinite(s.lat) ? s.lat : c ? c.lat : null;
     const lng = Number.isFinite(s.lng) ? s.lng : c ? c.lng : null;
     return {
-      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.pref || '', lat, lng, tier: 'list', radius: s.radius || 50,
+      id: `s_${s.key}`, kind: 'season', name: s.name, pref: s.pref || '', country: '日本', lat, lng, tier: 'list', radius: s.radius || 50,
       lists: ['seasons'], seasons: [{ months: s.months, label: s.label, mark: s.mark }], note: s.note || '',
     };
   });
@@ -180,7 +180,7 @@ function loadTile(key) {
       .catch(() => null) // 通信の失敗は覚えない
       .then((list) => {
         tilePending.delete(key);
-        if (list) tiles.set(key, list.map(([id, kind, name, lat, lng, tier, radius, lists, pref]) => ({ id, kind, name, lat, lng, tier, radius, lists, pref })));
+        if (list) tiles.set(key, list.map(([id, kind, name, lat, lng, tier, radius, lists, pref, country]) => ({ id, kind, name, lat, lng, tier, radius, lists, pref, country })));
       }));
   }
   return tilePending.get(key);
@@ -194,9 +194,75 @@ function spotById(id) {
 }
 
 // ---------- 地図の共通部品 ----------
+// 日本の外は OpenFreeMap（キー不要・無料、maplibre-gl ＋ @maplibre/maplibre-gl-leaflet を CDN から読み込む）に切り替える。
+// 中なら今までの国土地理院のまま（2026-10-14、world-plan.md 段階1）
+const OFM_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+const OFM_ATTR = '© OpenStreetMap contributors, OpenFreeMap';
+// ざっくりした日本の範囲（南北大東島〜択捉島あたりまで込み）。この外なら地図を切り替える
+const JP_BOUNDS = { s: 20, n: 46, w: 122, e: 154 };
+const isOutsideJapan = (lat, lng) => lat < JP_BOUNDS.s || lat > JP_BOUNDS.n || lng < JP_BOUNDS.w || lng > JP_BOUNDS.e;
+
+let maplibrePromise = null;
+function loadMaplibre() {
+  if (maplibrePromise) return maplibrePromise;
+  maplibrePromise = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css';
+    document.head.append(css);
+    const s1 = document.createElement('script');
+    s1.src = 'https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js';
+    s1.onerror = () => reject(new Error('maplibre-gl を読み込めませんでした'));
+    s1.onload = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js';
+      s2.onload = resolve;
+      s2.onerror = () => reject(new Error('maplibre-gl-leaflet を読み込めませんでした'));
+      document.head.append(s2);
+    };
+    document.head.append(s1);
+  });
+  return maplibrePromise;
+}
+// 地名は日本語（name:ja）があればそれを優先する（できれば、の対応。無ければ元の表示のまま）
+function preferJapaneseLabels(glMap) {
+  const style = glMap.getStyle();
+  if (!style || !style.layers) return;
+  for (const l of style.layers) {
+    if (l.layout && l.layout['text-field']) {
+      try { glMap.setLayoutProperty(l.id, 'text-field', ['coalesce', ['get', 'name:ja'], l.layout['text-field']]); } catch { /* 対応していないレイヤーは無視 */ }
+    }
+  }
+}
+const gsiLayer = () => L.tileLayer(GSI_URL, { attribution: GSI_ATTR, maxZoom: 18 });
+// map の土台を日本（国土地理院）／日本の外（OpenFreeMap）に合わせる。すでにその向きならなにもしない
+function setBaseLayer(map, outside) {
+  if (map._baseOutside === outside) return;
+  map._baseOutside = outside;
+  const old = map._baseLayer;
+  if (!outside) {
+    const gsi = gsiLayer();
+    gsi.addTo(map);
+    if (old) map.removeLayer(old);
+    map._baseLayer = gsi;
+    map.attributionControl.removeAttribution(OFM_ATTR);
+    return;
+  }
+  loadMaplibre().then(() => {
+    if (map._baseOutside !== true) return; // 読み込みの間にまた日本に戻っていたら何もしない
+    const gl = L.maplibreGL({ style: OFM_STYLE });
+    gl.addTo(map);
+    if (old) map.removeLayer(old);
+    map._baseLayer = gl;
+    map.attributionControl.addAttribution(OFM_ATTR);
+    const glMap = gl.getMaplibreMap();
+    if (glMap) glMap.once('styledata', () => preferJapaneseLabels(glMap));
+  }).catch(() => { map._baseOutside = false; }); // 読み込めなければ国土地理院のままにする
+}
 function makeMap(el, opts = {}) {
   const map = L.map(el, opts);
-  L.tileLayer(GSI_URL, { attribution: GSI_ATTR, maxZoom: 18 }).addTo(map);
+  const c = opts.center || [TOKYO.lat, TOKYO.lng];
+  setBaseLayer(map, isOutsideJapan(c[0], c[1]));
   state.maps.push(map);
   return map;
 }
@@ -243,7 +309,7 @@ fabEl.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-open]');
   if (!b) return;
   closeCard();
-  if (b.dataset.open === 'book') { spotQuery = ''; foodQuery = ''; masuDetail = null; openBook(); }
+  if (b.dataset.open === 'book') { spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; openBook(); }
   else if (b.dataset.open === 'diary') openDiary();
   else openRecord();
 });
@@ -310,11 +376,15 @@ function initMap() {
   }
   mainMap = L.map(mapEl, { zoomControl: false });
   L.control.zoom({ position: 'topright' }).addTo(mainMap);
-  L.tileLayer(GSI_URL, { attribution: GSI_ATTR, maxZoom: 18 }).addTo(mainMap);
+  setBaseLayer(mainMap, false); // 最初は東京（日本）から
   mainMap.attributionControl.addAttribution(WD_ATTR);
   layer = L.layerGroup().addTo(mainMap);
   mainMap.setView([TOKYO.lat, TOKYO.lng], 12);
-  mainMap.on('moveend', scheduleDraw);
+  mainMap.on('moveend', () => {
+    const c = mainMap.getCenter();
+    setBaseLayer(mainMap, isOutsideJapan(c.lat, c.lng));
+    scheduleDraw();
+  });
   mainMap.on('dragstart', () => setFollow(false));
   mainMap.getContainer().addEventListener('wheel', () => setFollow(false), { passive: true });
   mainMap.on('click', closeCard);
@@ -873,12 +943,12 @@ function nearAlertNote() {
 
 // ---------- 帳面 ----------
 function openBook() {
-  const tabs = [['spots', '名所'], ['foods', 'ご当地'], ['prefs', '都道府県']];
-  const body = state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : bookSpots();
+  const tabs = [['spots', '名所'], ['foods', 'ご当地'], ['prefs', '都道府県'], ['countries', '国']];
+  const body = state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : state.tab === 'countries' ? bookCountries() : bookSpots();
   showSheet(openBook, [
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('button', {
       class: 'tab' + (state.tab === k ? ' on' : ''), type: 'button',
-      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; masuDetail = null; openBook(); },
+      onclick: () => { state.tab = k; spotQuery = ''; foodQuery = ''; countryQuery = ''; masuDetail = null; openBook(); },
     }, label))),
     body,
   ]);
@@ -1132,6 +1202,45 @@ function bookPrefs() {
   ];
 }
 
+// 世界に広がる一覧（今は世界遺産だけ）の場所。国ごとの帳面はこの中だけで見せる（日本だけの一覧は都道府県の帳面にすでにある）
+function globalSpots() {
+  const keys = new Set(state.lists.filter((l) => l.global).map((l) => l.key));
+  return allListSpots().filter((s) => (s.lists || []).some((k) => keys.has(k)));
+}
+
+let countryQuery = '';
+function bookCountries() {
+  const spots = globalSpots();
+  const counts = countriesVisited(state.visits, spots);
+  const countries = countriesOf(spots).sort((a, b) => {
+    const d = (counts[b] || 0) - (counts[a] || 0);
+    if (d) return d;
+    if (a === '日本') return -1;
+    if (b === '日本') return 1;
+    return a.localeCompare(b, 'ja');
+  });
+  const visited = countries.filter((c) => counts[c]);
+  const q = normalizeName(countryQuery);
+  const sections = countries.map((country) => {
+    const p = countryProgress(state.visits, spots, country);
+    const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || normalizeName(country).includes(q)) : p.cells;
+    if (!p.total || !cells.length) return null;
+    return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
+      h('summary', {}, h('b', {}, country), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
+      barEl(p.count, p.total, TIER_COLOR.list),
+      h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
+  }).filter(Boolean);
+  return [
+    masuDetailPanel(),
+    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}`),
+    h('input', {
+      id: 'countrysearch', class: 'search', type: 'search', placeholder: '国名・名前で探す', value: countryQuery,
+      oninput: (e) => { countryQuery = e.target.value; reopenBookKeepFocus(); },
+    }),
+    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした'),
+  ];
+}
+
 // ---------- 設定 ----------
 function openSettings() {
   showSheet(openSettings, [
@@ -1353,7 +1462,7 @@ function openWelcome(done) {
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上のお題は、散歩・サイクリングでは毎日変わる「今日のお題」、旅行ではいま見頃の名所を集めた「今月のお題」です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・名勝・史跡・観光地などの名所、茶＝道の駅、緑＝近所の神社・お寺・温泉・喫茶店など。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
-      h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩は回って戻ると約4kmのお題、旅行は全国の一覧の場所だけを出します。'),
+      h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩は回って戻ると約4kmのお題、旅行は世界の一覧の場所だけを出します。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),
@@ -1396,5 +1505,9 @@ function startLocation() {
       location.reload();
     });
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => reg.update()).catch(() => {});
+  }
+  // 動作確認用：?debug をつけて開くと、ヘッドレスブラウザなどから地図やシートを操作できる
+  if (new URLSearchParams(location.search).has('debug')) {
+    window.__tabiDebug = { mainMap: () => mainMap, state, openBook, showCard: (id) => { const s = spotById(id); if (s) showCard(s); } };
   }
 })();

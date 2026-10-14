@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr,
-  modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, groupByDay, stampedOn, shouldRemindBackup,
+  distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
+  modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
@@ -309,6 +309,30 @@ test('prefsVisited: meals（ご当地グルメ）も都道府県の塗りに数�
   const meals = [{ pref: '秋田県' }, { spotId: 's1' }, { pref: '' }];
   const counts = prefsVisited([], [], meals, spots);
   assert.deepEqual(counts, { 秋田県: 1, 山梨県: 1 });
+});
+
+test('MODES.trip: 範囲は世界（東京からパリまで届く）', () => {
+  const tokyo = { lat: 35.681236, lng: 139.767125 };
+  const paris = { lat: 48.8566, lng: 2.3522 };
+  assert.ok(distanceMeters(tokyo, paris) < MODES.trip.range);
+});
+
+test('countryProgress・countriesOf・countriesVisited: 世界遺産など世界に広がる一覧の国ごとの進み具合', () => {
+  const spots = [
+    { id: 'jp1', name: '富士山', country: '日本', lists: ['heritage'] },
+    { id: 'jp2', name: '姫路城', country: '日本', lists: ['heritage'] },
+    { id: 'fr1', name: 'モンサンミッシェル', country: 'フランス', lists: ['heritage'] },
+    { id: 'it1', name: 'コロッセオ', country: 'イタリア', lists: ['heritage'] }, // 国が同じでも未訪問のまま残る
+  ];
+  assert.deepEqual(countriesOf(spots).sort(), ['イタリア', 'フランス', '日本']);
+  const visits = [{ spotId: 'jp1' }, { spotId: 'fr1' }];
+  assert.deepEqual(countriesVisited(visits, spots), { 日本: 1, フランス: 1 });
+  const jp = countryProgress(visits, spots, '日本');
+  assert.equal(jp.count, 1); assert.equal(jp.total, 2);
+  const it = countryProgress(visits, spots, 'イタリア');
+  assert.equal(it.count, 0); assert.equal(it.total, 1);
+  // country が無い場所（まだ古いデータなど）は日本として数える
+  assert.deepEqual(countriesOf([{ id: 'x' }]), ['日本']);
 });
 
 test('groupByDay: meals も日付にまとめる', () => {

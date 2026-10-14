@@ -119,7 +119,7 @@ export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', 
 export const MODES = {
   walk: { label: '散歩', range: 2000 },
   bike: { label: 'サイクリング', range: 10000 },
-  trip: { label: '旅行', range: 3000000, note: '全国' }, // 日本の端から端まで届く距離
+  trip: { label: '旅行', range: 20100000, note: '世界' }, // 地球上のどの2点でも届く距離（対極点のきょり、約20,000km）
 };
 // 前の版で保存した旅のしかた（車・電車・飛行機）は旅行にする
 export function normalizeMode(mode) { return MODES[mode] ? mode : ['car', 'train', 'plane'].includes(mode) ? 'trip' : 'walk'; }
@@ -337,6 +337,32 @@ export function prefsVisited(visits, seals, meals, spots) {
   for (const v of visits || []) add((byId.get(v.spotId) || {}).pref);
   for (const s of seals || []) add(s.pref || (byId.get(s.spotId) || {}).pref);
   for (const m of meals || []) add(m.pref || (byId.get(m.spotId) || {}).pref);
+  return out;
+}
+
+// ---------- 国 ----------
+// 世界に広がる一覧（世界遺産など）の、国ごとの進み具合。listProgress の国版
+export function countryProgress(visits, spots, country) {
+  const cells = spots.filter((s) => (s.country || '日本') === country).map((s) => {
+    const mine = visits.filter((v) => v.spotId === s.id && (!Array.isArray(s.seasons) || v.seasonal));
+    return { id: s.id, name: s.name, pref: s.pref || '', hasCoord: s.hasCoord !== undefined ? !!s.hasCoord : Number.isFinite(s.lat), got: mine.length > 0, visits: mine.length };
+  });
+  return { country, count: cells.filter((c) => c.got).length, total: cells.length, cells };
+}
+
+// spots に出てくる国の一覧（重複なし）
+export function countriesOf(spots) {
+  return [...new Set(spots.map((s) => s.country || '日本'))];
+}
+
+// 判子を押した国ごとの数 { 国名: 件数 }
+export function countriesVisited(visits, spots) {
+  const byId = new Map(spots.map((s) => [s.id, s]));
+  const out = {};
+  for (const v of visits || []) {
+    const c = (byId.get(v.spotId) || {}).country || '日本';
+    out[c] = (out[c] || 0) + 1;
+  }
   return out;
 }
 

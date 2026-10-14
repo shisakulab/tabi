@@ -23,7 +23,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 一覧の定義。cond は ?s の絞り込み
 // tier は 'list'（一覧に入っている場所。車・電車でも出す）か 'near'（近所の場所。徒歩・自転車のときだけ出す）
 const LISTS = [
-  { key: 'heritage', name: '世界遺産', note: '日本の世界遺産の構成資産', radius: 500, cond: '?s wdt:P757 [] ; wdt:P17 wd:Q17 .' },
+  // 世界遺産は世界分（2026-10-14 に日本の絞りを外した）。他の一覧は日本のまま
+  { key: 'heritage', name: '世界遺産', note: '世界遺産の構成資産', radius: 500, global: true, cond: '?s wdt:P757 [] .' },
   { key: 'judenken', name: '重伝建', note: '重要伝統的建造物群保存地区', radius: 300, cond: '?s wdt:P1435 wd:Q850649 .' },
   { key: 'meijo100', name: '日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q1139439 .' },
   { key: 'zokumeijo', name: '続日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q30927700 .' },
@@ -153,8 +154,8 @@ out center;`, `osm-${iso}-${g}`));
     const lat = e.lat ?? e.center?.lat; const lng = e.lon ?? e.center?.lon;
     const name = (t['name:ja'] || t.name || '').trim();
     if (!kind || !name || !Number.isFinite(lat)) continue;
-    // 灯台は遠くから目当てに行く場所なので、車・電車でも出す（tier: 'list'）
-    out.push([`${e.type[0]}${e.id}`, kind, name, +lat.toFixed(6), +lng.toFixed(6), kind === 'lighthouse' ? 'list' : 'near', e.type === 'node' ? 50 : 100, [], pref]);
+    // 灯台は遠くから目当てに行く場所なので、車・電車でも出す（tier: 'list'）。OSM は日本の分だけなので国は固定で '日本'
+    out.push([`${e.type[0]}${e.id}`, kind, name, +lat.toFixed(6), +lng.toFixed(6), kind === 'lighthouse' ? 'list' : 'near', e.type === 'node' ? 50 : 100, [], pref, '日本']);
   }
   return out;
 }
@@ -189,8 +190,95 @@ async function gsiPrefFor(id, lat, lng, cache) {
   return pref;
 }
 
-// 1つの一覧を取る：[{ id, name, lat, lng, pref }]（id 重複は1つに）
+// id の集合の名前（ja・en）をまとめて取る：id → { ja, en }
+async function fetchLabels(ids, cacheKeyPrefix) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    const rows = await sparql(`SELECT ?s ?lja ?len WHERE { VALUES ?s { ${chunk.map((q) => 'wd:' + q).join(' ')} }
+      OPTIONAL { ?s rdfs:label ?lja FILTER(LANG(?lja) = "ja") }
+      OPTIONAL { ?s rdfs:label ?len FILTER(LANG(?len) = "en") } }`, i ? `${cacheKeyPrefix}-${i}` : cacheKeyPrefix);
+    for (const r of rows) {
+      const id = qidOf(r.s);
+      const cur = out.get(id) || { ja: '', en: '' };
+      if (r.lja && !cur.ja) cur.ja = r.lja.value;
+      if (r.len && !cur.en) cur.en = r.len.value;
+      out.set(id, cur);
+    }
+  }
+  return out;
+}
+// ja・en どちらも無い id に、現地語（取れた最初の言語のラベル）を補う。件数は少ない想定（世界遺産で約640件）
+async function fetchAnyLabel(ids, cacheKeyPrefix) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 150) { // 言語の数だけ行が増えるので少なめに分ける
+    const chunk = ids.slice(i, i + 150);
+    const rows = await sparql(`SELECT ?s ?l WHERE { VALUES ?s { ${chunk.map((q) => 'wd:' + q).join(' ')} } ?s rdfs:label ?l . }`,
+      i ? `${cacheKeyPrefix}-${i}` : cacheKeyPrefix);
+    for (const r of rows) { const id = qidOf(r.s); if (!out.has(id)) out.set(id, r.l.value); }
+  }
+  return out;
+}
+// id の集合の国（P17）：id → 国の QID（複数あれば最初の1つ）
+async function fetchP17(ids, cacheKeyPrefix) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    const rows = await sparql(`SELECT ?s ?p17 WHERE { VALUES ?s { ${chunk.map((q) => 'wd:' + q).join(' ')} } ?s wdt:P17 ?p17 . }`,
+      i ? `${cacheKeyPrefix}-${i}` : cacheKeyPrefix);
+    for (const r of rows) { const id = qidOf(r.s); if (!out.has(id)) out.set(id, qidOf(r.p17)); }
+  }
+  return out;
+}
+
+// 世界分の一覧（今は世界遺産だけ）：名前は 日本語 → 英語 → 現地語（他の言語のラベル）の順。国は P17 から付け、
+// 日本の構成資産だけ都道府県も付ける（gsiPrefFor は日本の逆ジオコーダなので、日本以外の座標には使わない）
+async function fetchGlobalList(list) {
+  const base = await sparql(`SELECT ?s ?c WHERE { ${list.cond} OPTIONAL { ?s wdt:P625 ?c } }`, `${list.key}-base`);
+  const items = new Map();
+  for (const r of base) {
+    const id = qidOf(r.s);
+    const it = items.get(id) || { id, lat: null, lng: null };
+    const p = r.c && parsePoint(r.c.value);
+    if (p && it.lat === null) { it.lat = p.lat; it.lng = p.lng; }
+    items.set(id, it);
+  }
+  // 座標のないものも一覧には出す（判子は押せない。座標あり/なしの扱いは他の一覧と同じ）
+  const all = [...items.values()];
+  const ids = all.map((it) => it.id);
+  const labels = await fetchLabels(ids, `${list.key}-labels`);
+  const needAny = ids.filter((id) => !(labels.get(id) || {}).ja && !(labels.get(id) || {}).en);
+  const anyLabels = needAny.length ? await fetchAnyLabel(needAny, `${list.key}-any`) : new Map();
+  const countryOf = await fetchP17(ids, `${list.key}-p17`);
+  const countryQids = [...new Set([...countryOf.values()])];
+  const countryLabels = await fetchLabels(countryQids, `${list.key}-country-labels`);
+  const result = [];
+  for (const it of all) {
+    const lab = labels.get(it.id) || {};
+    const name = lab.ja || lab.en || anyLabels.get(it.id) || '';
+    if (!name) continue; // 名前がまったく取れないものは載せない（世界遺産で9件ほど）
+    const cQid = countryOf.get(it.id);
+    const cLab = cQid ? (countryLabels.get(cQid) || {}) : {};
+    result.push({ id: it.id, name, lat: it.lat, lng: it.lng, pref: '', country: cLab.ja || cLab.en || '' });
+  }
+  result.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  const jpIds = result.filter((it) => it.country === '日本').map((it) => it.id);
+  if (jpIds.length) {
+    const prefRows = [];
+    for (let i = 0; i < jpIds.length; i += 300) {
+      prefRows.push(...await sparql(`SELECT ?s ?pl WHERE { VALUES ?s { ${jpIds.slice(i, i + 300).map((q) => 'wd:' + q).join(' ')} }
+      ?s wdt:P131+ ?p . ?p wdt:P31 wd:Q50337 . ?p rdfs:label ?pl FILTER(LANG(?pl) = "ja") }`, i ? `${list.key}-pref-${i}` : `${list.key}-pref`));
+    }
+    const prefOf = new Map();
+    for (const r of prefRows) { const id = qidOf(r.s); if (!prefOf.has(id)) prefOf.set(id, r.pl.value); }
+    for (const it of result) if (it.country === '日本') it.pref = prefOf.get(it.id) || '';
+  }
+  return result;
+}
+
+// 1つの一覧を取る：[{ id, name, lat, lng, pref, country }]（id 重複は1つに）。日本の一覧は country を固定で '日本' にする
 async function fetchList(list, gsiCache) {
+  if (list.global) return fetchGlobalList(list);
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }
     OPTIONAL { ?s rdfs:label ?l FILTER(LANG(?l) = "ja") } }`, `${list.key}-base`);
@@ -217,7 +305,7 @@ async function fetchList(list, gsiCache) {
   for (const it of result) {
     if (!it.pref && it.lat !== null) it.pref = await gsiPrefFor(it.id, it.lat, it.lng, gsiCache);
   }
-  return result;
+  return result.map((it) => ({ ...it, country: '日本' }));
 }
 
 // 国宝：建物ごと（P1435=Q1139795）を、P361（〜の一部）の親が1つに決まるものは親ごとにまとめる。
@@ -291,7 +379,7 @@ async function fetchKokuhoGroups(items) {
     const radius = Math.min(500, Math.max(150, Math.round(farthest + 50)));
     const pref = (kids.find((k) => k.pref) || {}).pref || '';
     const name = info.name || commonPrefix(kids.map((k) => k.name)) || kids[0].name;
-    extra.push({ id: parent, name, lat: center.lat, lng: center.lng, pref, radius });
+    extra.push({ id: parent, name, lat: center.lat, lng: center.lng, pref, radius, country: '日本' });
   }
   // 親そのものも国宝として一覧にある（法隆寺・姫路城など）なら、まとめた方だけ残す
   const extraIds = new Set(extra.map((e) => e.id));
@@ -366,7 +454,7 @@ async function main() {
     return;
   }
   await mkdir(path.join(OUT, 'spots'), { recursive: true });
-  const spots = new Map(); // id → [id, kind, name, lat, lng, tier, radius, lists, pref]
+  const spots = new Map(); // id → [id, kind, name, lat, lng, tier, radius, lists, pref, country]
   const listsOut = [];
   const counts = {};
   const gsiCache = await loadGsiCache();
@@ -383,16 +471,21 @@ async function main() {
       if (grouped.excluded.length) console.log(['国宝: まとめなかった親（一覧・集合）:', ...grouped.excluded.map((e) => `${e.name || e.id}（${e.id}、子 ${e.count} 件${e.farthest ? `、いちばん遠い子 ${e.farthest}m` : ""}）`)].join('\n  '));
     }
     counts[list.key] = { total: items.length, withCoord: items.filter((i) => i.lat !== null).length };
-    console.log(`${list.name}: ${items.length} 件（座標あり ${counts[list.key].withCoord}）`);
-    listsOut.push({ key: list.key, name: list.name, note: list.note, items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0]) });
+    const countryNote = list.global ? `、国 ${new Set(items.map((i) => i.country).filter(Boolean)).size} か国` : '';
+    console.log(`${list.name}: ${items.length} 件（座標あり ${counts[list.key].withCoord}${countryNote}）`);
+    listsOut.push({
+      key: list.key, name: list.name, note: list.note, global: !!list.global,
+      items: items.map((i) => [i.id, i.name, i.pref, i.lat !== null ? 1 : 0, i.country || '日本']),
+    });
     for (const it of items) {
       if (it.lat === null) continue;
       const cur = spots.get(it.id);
       const radius = it.radius || list.radius;
-      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, 'list', radius, [list.key], it.pref]); continue; }
+      if (!cur) { spots.set(it.id, [it.id, list.key, it.name, it.lat, it.lng, 'list', radius, [list.key], it.pref, it.country || '日本']); continue; }
       if (!cur[7].includes(list.key)) cur[7].push(list.key);
       cur[6] = Math.max(cur[6], radius);
       if (!cur[8]) cur[8] = it.pref;
+      if (!cur[9]) cur[9] = it.country;
     }
   }
   const nearCounts = {};
@@ -417,9 +510,9 @@ async function main() {
     generatedAt: new Date().toISOString(), source: 'Wikidata (CC0), OpenStreetMap contributors (ODbL)', spots: spots.size, tiles: [...tiles.keys()].sort(), counts,
     // 区画ごとの件数 [一覧の場所, 近所の場所]。地図を引いたとき、区画を読まずに数だけ出すのに使う
     tileCounts: Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]])),
-    shape: '[id, kind, name, lat, lng, tier, radius, lists, pref]',
+    shape: '[id, kind, name, lat, lng, tier, radius, lists, pref, country]',
   }));
-  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0)]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
+  // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0), 国]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
   await writeFile(path.join(OUT, 'lists.json'), JSON.stringify({ lists: listsOut, aliases: kokuhoAliases }));
   console.log(`地点 ${spots.size} 件、区画 ${tiles.size} 個`);
   const sc = await fetchSeasonCoords();

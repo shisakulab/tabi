@@ -51,6 +51,7 @@
 - 海外の「近所の場所」には教会・モスクなども入れる（段階3で。数が多いので出し方はそのとき決める）
 - 最初の公開は段階1だけ
 - 地図は Protomaps（PMTiles）を軸に、Leaflet のまま protomaps-leaflet で出す案から始める。注意：世界全体の PMTiles は大きく（全ズームで100GB 超）GitHub Pages（サイト1GB が目安）に置けないので、日本の外は低いズームだけ自前に置くか、寄ったときは別のタイル（OpenFreeMap など）を使うかを、作り始めに試して決める
+- 段階1は C ドライブの空きが少ないため自前配置を見送り、日本の外だけ OpenFreeMap（キー不要・無料）を maplibre-gl ＋ @maplibre/maplibre-gl-leaflet（CDN は cdn.jsdelivr.net）で Leaflet に重ねる案にした。Protomaps の自前配置は空きができてから検討する
 
 ## 決めてほしいこと（済み）
 1. 画面の言葉は、当面日本語だけでよいか
