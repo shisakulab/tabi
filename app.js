@@ -594,6 +594,8 @@ function questDone(spot) {
   if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
   return seasonalVisitsOf(spot.id).some((v) => sameMonth(v, d));
 }
+// 散歩・サイクリングは毎日変わるので「今日のお題」、旅行は見頃の名所なので「10月のお題」
+const questTitle = () => (DAILY_MODES.includes(state.mode) ? '今日のお題' : `${now().getMonth() + 1}月のお題`);
 const questMark = (s) => (s.daily ? '今日' : s.seasons[0].mark);
 const questLabel = (s) => (s.daily ? `今日のお題・${spotTags(s)[0] || '近所'}` : s.seasons[0].label);
 function drawQuest() {
@@ -601,10 +603,10 @@ function drawQuest() {
   const qs = currentQuests();
   const got = qs.filter(questDone).length;
   questEl.onclick = openQuests;
-  questEl.setAttribute('aria-label', `${d.getMonth() + 1}月のお題`);
+  questEl.setAttribute('aria-label', questTitle());
   questEl.replaceChildren(
     h('div', { class: 'qtop' },
-      h('b', { class: 'qtitle' }, `${d.getMonth() + 1}月のお題`),
+      h('b', { class: 'qtitle' }, questTitle()),
       h('span', { class: 'muted' }, state.dailyLoop ? `回って戻ると${loopText(state.dailyLoop).split('・')[0]}` : qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
       qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null),
     qs.length
@@ -619,7 +621,7 @@ function drawQuest() {
 function openQuests() {
   const qs = currentQuests();
   showSheet(openQuests, [
-    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, `${now().getMonth() + 1}月のお題`),
+    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, questTitle()),
     h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '散歩・サイクリングでは、近くのまだ行っていない場所から「今日のお題」も毎日選びます（ご飯・寺社・その他から1つずつ）。' : ''}`),
     state.dailyLoop ? h('p', { class: 'sub' }, `今日の${state.mode === 'walk' ? '散歩' : 'サイクリング'}：上から順に回って戻ると ${loopText(state.dailyLoop)}（${state.mode === 'walk' ? '少し速めに歩いて時速5km' : 'ゆっくり時速15km'}、道は直線の1.25倍で見積もり）。毎日続ける運動として約30分にしています。厚生労働省のガイドでは、普段の生活の動き（1日60分・約8,000歩）に加えて、息が弾む程度の運動を週60分以上が目安です。`) : null,
     h('ul', { class: 'list' }, qs.map((s) => h('li', {},
@@ -1289,7 +1291,7 @@ function openWelcome(done) {
     h('h1', { style: 'font-size:24px;margin:4px 0 10px' }, '旅暦へようこそ'),
     h('ul', { class: 'welcome' },
       h('li', {}, '世界遺産・国宝・100名城・一宮・道の駅・名水百選など、行った場所に判子を押す帳面です。場所の近くで「判子を押す」を押します。'),
-      h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上の「今月のお題」は、いま見頃の場所です。'),
+      h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上のお題は、散歩・サイクリングでは毎日変わる「今日のお題」、旅行ではいま見頃の名所を集めた「今月のお題」です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・名勝・史跡・観光地などの名所、茶＝道の駅、緑＝近所の神社・お寺・温泉・喫茶店など。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
       h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩は回って戻ると約4kmのお題、旅行は全国の一覧の場所だけを出します。'),
       h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
