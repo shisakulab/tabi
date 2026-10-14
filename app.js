@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, pickGuessedSpot, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1524,6 +1524,7 @@ function openSettings() {
         h('input', { type: 'checkbox', checked: setting('nearalert'), onchange: (e) => toggleNearAlert(e.target.checked) }), '判子を押せる場所に着いたら知らせる（振動・通知）'),
       h('p', { class: 'muted', style: 'margin:0' }, nearAlertNote()),
       h('p', { class: 'muted', style: 'margin:0' }, '画面を消している間は位置を取れないので押せません。')),
+    aiSettings(),
     h('p', { class: 'muted' }, 'データはこの端末の中だけにあります。機種変更の前に書き出してください。'),
     h('p', { class: 'muted' }, '出典：地図 ' + '国土地理院（淡色地図）／場所のデータ Wikidata（CC0）／郷土料理：農林水産省「うちの郷土料理」（一部を要約）。位置情報は端末の外には送りません。'),
   ]);
@@ -1767,6 +1768,7 @@ async function runPhotoImport(files) {
   }
   const spots = await spotsAround(photos, 0.03);
   const { matches, withoutLocation, withoutSpot, nearest } = matchPhotoStamps(photos, spots, state.visits);
+  aiPending = photos.filter((p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng));
   if (!matches.length) {
     // 理由が分かるように、トーストではなく画面で出す
     const lines = [];
@@ -1783,6 +1785,7 @@ async function runPhotoImport(files) {
       h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '判子は付きませんでした'),
       ...lines.map((t) => h('p', { class: 'sub', style: 'margin:0 0 8px' }, t)),
       detail,
+      aiButton(),
       h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:6px', onclick: closeSheet }, '閉じる'),
     ], () => sheetEl.classList.add('small'));
     return;
@@ -1793,22 +1796,126 @@ async function runPhotoImport(files) {
   for (const m of matches) {
     const spot = spotById(m.spotId);
     if (!spot) continue;
-    const photo = photos[m.photoIndex];
-    let photoId = null;
-    try {
-      if (!blobCache.has(m.photoIndex)) blobCache.set(m.photoIndex, await resizePhoto(photo.file));
-      photoId = db.newId();
-      await db.put('photos', { id: photoId, blob: blobCache.get(m.photoIndex) });
-    } catch { /* 写真が保存できなくても判子は付ける */ }
-    const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${m.date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, m.date), source: 'photo', importId };
-    await db.put('visits', visit);
-    const seal = { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: m.date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId };
-    await db.put('seals', seal);
+    await stampWithPhoto(spot, m.date, photos[m.photoIndex].file, importId, 'photo', blobCache, m.photoIndex);
     placeSet.add(spot.id);
   }
   await loadData();
   render();
   showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+}
+
+// 写真つきの判子を1つ押す（判子＋写真・メモの印）。blobCache は同じ写真を何度も縮めないため
+async function stampWithPhoto(spot, date, file, importId, source, blobCache, key) {
+  let photoId = null;
+  try {
+    if (!blobCache.has(key)) blobCache.set(key, await resizePhoto(file));
+    photoId = db.newId();
+    await db.put('photos', { id: photoId, blob: blobCache.get(key) });
+  } catch { /* 写真が保存できなくても判子は付ける */ }
+  const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, date), source, importId };
+  await db.put('visits', visit);
+  const seal = { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId };
+  await db.put('seals', seal);
+}
+
+// ---------- 写真から場所を推定（自分の Claude API キー） ----------
+// 位置が消えている写真を、設定に API キーを入れた人だけ、Claude に見せて場所を推定する（ai-locate.js）
+const AI_MODELS_LIST = [
+  // 1回あたりの目安（円）：長い辺 1024px の写真＋指示文＋答え、1ドル150円で見積もり
+  { id: 'claude-opus-5', label: 'Opus 5', yen: 2 },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', yen: 0.6 },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', yen: 0.3 },
+];
+const aiKey = () => { try { return localStorage.getItem(LS + 'aikey') || ''; } catch { return ''; } };
+const aiModel = () => { try { return localStorage.getItem(LS + 'aimodel') || AI_MODELS_LIST[0].id; } catch { return AI_MODELS_LIST[0].id; } };
+let aiPending = []; // 直前の取り込みで位置が分からなかった写真
+// 撮った時刻（なければファイルの日時）が30分以内の写真は同じ場面とみなし、代表の1枚だけ送る
+function aiGroups(photos) {
+  const items = photos.map((p) => ({ p, t: p.file.lastModified || 0 })).sort((a, b) => a.t - b.t);
+  const groups = [];
+  for (const it of items) {
+    const last = groups[groups.length - 1];
+    if (last && it.t - last.t <= 30 * 60 * 1000) { last.members.push(it.p); last.t = it.t; } else groups.push({ rep: it.p, members: [it.p], t: it.t });
+  }
+  return groups;
+}
+function aiButton() {
+  if (!aiKey() || !aiPending.length) return null;
+  const groups = aiGroups(aiPending);
+  const m = AI_MODELS_LIST.find((x) => x.id === aiModel()) || AI_MODELS_LIST[0];
+  const yen = Math.max(1, Math.round(groups.length * m.yen));
+  return h('button', { class: 'btn', type: 'button', style: 'width:100%;margin:0 0 8px', onclick: () => { closeSheet(); runAiLocate(groups); } },
+    `位置のない写真 ${aiPending.length}枚を Claude で推定（${groups.length}回・約${yen}円）`);
+}
+async function runAiLocate(groups) {
+  let mod;
+  try { mod = await import('./ai-locate.js'); } catch { toast('推定の部品を読み込めませんでした（通信を確かめてください）'); return; }
+  const importId = db.newId();
+  const blobCache = new Map();
+  const placeSet = new Set(); const lines = [];
+  let done = 0; let failed = 0;
+  for (const g of groups) {
+    toast(`Claude で推定しています… ${++done}/${groups.length}`);
+    let guess = null;
+    try {
+      const jpeg = await resizePhotoTo(g.rep.file, mod.AI_IMAGE_MAX);
+      guess = await mod.locatePhoto({ apiKey: aiKey(), model: aiModel(), jpeg });
+    } catch (e) {
+      failed++;
+      const msg = String((e && (e.status ? `${e.status} ${e.message}` : e.message)) || e);
+      lines.push(`${g.rep.file.name}：エラー（${msg.slice(0, 80)}）`);
+      if (e && (e.status === 401 || e.status === 403)) break; // キーが違えば続けても同じ
+      continue;
+    }
+    if (!guess || !guess.found) { lines.push(`${g.rep.file.name}：場所は分かりませんでした${guess && guess.reason ? `（${guess.reason}）` : ''}`); continue; }
+    const spots = await spotsAround([{ lat: Number(guess.lat), lng: Number(guess.lng) }], 0.3);
+    const spot = pickGuessedSpot(guess, spots);
+    const date = g.rep.date || todayStr(new Date(g.rep.file.lastModified || Date.now()));
+    if (!spot) { lines.push(`${g.rep.file.name}：「${guess.place_name}」（${guess.confidence}）と推定。近くに判子の場所はありませんでした`); continue; }
+    if (stampedOn(state.visits, spot.id, new Date(`${date}T12:00:00`)) || placeSet.has(`${spot.id}_${date}`)) { lines.push(`${g.rep.file.name}：「${spot.name}」はその日もう押してありました`); continue; }
+    await stampWithPhoto(spot, date, g.rep.file, importId, 'ai', blobCache, g.rep.file);
+    placeSet.add(`${spot.id}_${date}`);
+    lines.push(`${g.rep.file.name}：「${spot.name}」（${date}・${guess.reason}）`);
+  }
+  aiPending = [];
+  await loadData();
+  render();
+  showSheet(null, [
+    h('h2', { style: 'font-size:18px;margin:0 0 6px' }, 'Claude で推定'),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, `${groups.length}回たずねて、${placeSet.size}か所に判子を付けました。${failed ? `（エラー ${failed}回）` : ''}日付が写真に残っていないものは、ファイルの日時を使っています。`),
+    h('ul', { class: 'muted', style: 'font-size:12px;padding-left:18px;margin:0 0 10px;word-break:break-all' }, lines.slice(0, 40).map((t) => h('li', {}, t))),
+    h('div', { style: 'display:flex;gap:8px;justify-content:center' },
+      placeSet.size ? h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す') : null,
+      h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
+  ]);
+}
+// 長い辺を max px にした JPEG（推定に送る用。保存用の resizePhoto とは大きさを分ける）
+async function resizePhotoTo(file, max) {
+  const src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const size = fitSize(src.width, src.height, max);
+  const canvas = document.createElement('canvas');
+  canvas.width = size.w; canvas.height = size.h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size.w, size.h);
+  ctx.drawImage(src, 0, 0, size.w, size.h);
+  if (src.close) src.close();
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+  if (!blob) throw new Error('写真を変換できませんでした');
+  return blob;
+}
+function aiSettings() {
+  const key = h('input', { type: 'password', placeholder: 'sk-ant-…', value: aiKey(), autocomplete: 'off', style: 'flex:1;min-width:0',
+    onchange: (e) => {
+      const v = e.target.value.trim();
+      try { if (v) localStorage.setItem(LS + 'aikey', v); else localStorage.removeItem(LS + 'aikey'); } catch { /* 保存できなくても続ける */ }
+      toast(v ? 'キーを保存しました' : 'キーを消しました');
+    } });
+  return h('div', { class: 'setrow', style: 'display:grid;gap:6px' },
+    h('b', {}, '写真から場所を推定（自分の Claude API キー）'),
+    h('p', { class: 'muted', style: 'margin:0' }, '位置が消えている写真を Claude に見せて、場所を推定します。キーを入れた人だけ使えます。キーはこの端末の中だけに保存し（書き出しにも入りません）、写真は推定するときだけ縮めて Anthropic に送ります。費用はキーの持ち主の API 利用料です（1回の目安：Opus 5 約2円・Sonnet 5 約0.6円・Haiku 4.5 約0.3円。30分以内に撮った写真はまとめて1回）。'),
+    h('div', { style: 'display:flex;gap:8px;align-items:center' }, key),
+    h('div', { class: 'chips' }, AI_MODELS_LIST.map((m) => h('button', { class: 'chip' + (aiModel() === m.id ? ' on' : ''), type: 'button',
+      onclick: () => { try { localStorage.setItem(LS + 'aimodel', m.id); } catch { /* 保存できなくても続ける */ } openSettings(); } }, m.label))));
 }
 
 // 点（{ lat, lng }）の近くの区画を読み込んで、判定に使う場所を返す（地図を開いていない場所でも判定できるように）
@@ -1828,13 +1935,14 @@ function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, 
     withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
     withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
   ].filter(Boolean).join('・');
-  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId);
+  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId, aiButton());
 }
 
-function showImportSheet(title, text, importId) {
+function showImportSheet(title, text, importId, extra = null) {
   showSheet(null, [
     h('h2', { style: 'font-size:18px;margin:0 0 6px' }, title),
     h('p', { class: 'sub', style: 'margin:0 0 14px' }, text),
+    extra,
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
       h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す'),
       h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),
