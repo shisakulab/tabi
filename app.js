@@ -897,8 +897,9 @@ async function updateNear() {
   if (DAILY_MODES.includes(state.mode)) {
     const dLat = MODES[state.mode].range / 111000; const dLng = dLat / Math.cos((pos.lat * Math.PI) / 180);
     await ensureTiles(tilesForBounds(pos.lat - dLat, pos.lng - dLng, pos.lat + dLat, pos.lng + dLng));
-    drawQuest();
   }
+  // 旅行の「今月のお題」も、動いたら距離と並びを描き直す（前の場所からの距離が残っていた）
+  drawQuest();
 }
 function drawNear(best) {
   if (autoNote && best && best.spot.id !== autoNote.spot.id) autoNote = null;
