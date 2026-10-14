@@ -1710,6 +1710,19 @@ function showImportSheet(title, text, importId) {
 // ---------- 経路（GPX）からまとめて判子 ----------
 // Strava・ヘルスケアの経路などの GPX を選ぶ→通った場所に、その日の判子を確かめる画面なしで全部押す（写真と同じく、まとめて取り消せる）
 function pickGpxForImport() {
+  showSheet(null, [
+    h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '経路（GPX）からまとめて判子'),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, 'GPX は、歩いた・走った道すじを記録したファイルです。先に別のアプリから書き出して、iPhone の「ファイル」に保存しておく必要があります。'),
+    h('ul', { class: 'welcome' },
+      h('li', {}, 'Strava：パソコンのブラウザで strava.com を開き、アクティビティの「…」→「GPX をエクスポート」'),
+      h('li', {}, 'iPhone のヘルスケア：ワークアウトの経路の地図から「経路を書き出す」（iOS 17 以降）'),
+      h('li', {}, '保存したら、下のボタンで「ファイル」からそのファイルを選びます（「最近使った項目」か「ダウンロード」にあります）')),
+    h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => { closeSheet(); pickGpxFile(); } }, 'GPX ファイルを選ぶ'),
+      h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'やめる')),
+  ]);
+}
+function pickGpxFile() {
   // iPhone は accept に拡張子だけだと選べないことがあるので、XML の型も並べる
   const input = h('input', { type: 'file', accept: '.gpx,application/gpx+xml,application/xml,text/xml', multiple: true, hidden: true, onchange: async (e) => {
     const files = [...e.target.files];
@@ -1854,7 +1867,6 @@ function openImportAsk(done) {
     h('p', { class: 'sub', style: 'margin:0 0 10px' }, 'スマホの写真の撮影場所と日付から、行った場所にまとめて判子を押します。確かめる画面はなく、あとで「まとめて取り消す」で外せます。写真は端末の外に送りません。'),
     h('p', { class: 'sub', style: 'margin:0 0 14px' }, '次の画面で、旅の写真をまとめて選んでください（多いほど判子が増えます）。'),
     h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickPhotosForImport) }, '写真から判子を押す'),
-    h('button', { class: 'btn', type: 'button', style: 'width:100%;margin-bottom:8px', onclick: () => go(pickGpxForImport) }, 'Strava などの経路（GPX ファイル）から'),
     h('button', { class: 'btn', type: 'button', style: 'width:100%', onclick: () => go(null) }, 'あとで（設定の歯車からいつでも）'),
   ], () => sheetEl.classList.add('small'));
 }
