@@ -559,3 +559,19 @@ test('matchGpxVisits: 3分以上いた場所だけ判子、通っただけは「
   // 既に押してあれば増やさない
   assert.equal(matchGpxVisits(pts, spots, [{ spotId: 'stay', at: t }]).stamps.length, 0);
 });
+
+test('readExifGPS / readExifDate: HEIC（JPEG でない）でも EXIF を探して読む', () => {
+  // JPEG の EXIF の部分（'Exif' から後ろ）を、HEIC の箱の頭（ftyp heic）の後ろに置いたもの
+  const toHeic = (jpegBuf) => {
+    const j = new Uint8Array(jpegBuf);
+    let i = 0; while (!(j[i] === 0x45 && j[i + 1] === 0x78 && j[i + 2] === 0x69 && j[i + 3] === 0x66)) i++;
+    const head = [0, 0, 0, 24, ...[...'ftypheic'].map((c) => c.charCodeAt(0)), 0, 0, 0, 0, ...[...'mif1heic'].map((c) => c.charCodeAt(0)), 1, 2, 3, 4];
+    const out = new Uint8Array(head.length + j.length - i);
+    out.set(head, 0); out.set(j.slice(i), head.length);
+    return out.buffer;
+  };
+  const g = readExifGPS(toHeic(makeGpsJpeg(true)));
+  assert.ok(g && Math.abs(g.lat - (35 + 41 / 60 + 22.2 / 3600)) < 1e-6);
+  assert.equal(readExifDate(toHeic(makeJpeg(false))), '2024-05-06');
+  assert.equal(readExifGPS(new Uint8Array([0, 0, 0, 8, 1, 2, 3, 4]).buffer), null);
+});

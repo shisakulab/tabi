@@ -494,10 +494,22 @@ export function sealDraft({ spotId, visits = [], spotById, pos, acc, now = new D
 }
 
 // JPEG の EXIF から撮影日 'YYYY-MM-DD'（DateTimeOriginal、無ければ DateTime）。読めなければ null
+// JPEG 以外（iPhone の HEIC など）の EXIF：ファイルの中から「Exif  」＋TIFF の頭（II*  / MM *）を探して、その位置を返す。
+// HEIC は箱（ISOBMFF）の中に EXIF をそのまま持っているので、箱をたどらなくても見つかる
+export function findTiffStart(v) {
+  const n = Math.min(v.byteLength, 8 * 1024 * 1024) - 10;
+  for (let i = 0; i < n; i++) {
+    if (v.getUint8(i) !== 0x45 || v.getUint32(i) !== 0x45786966 || v.getUint16(i + 4) !== 0) continue; // 'Exif' 00 00
+    const o = v.getUint16(i + 6);
+    if ((o === 0x4949 && v.getUint16(i + 8) === 0x2a00) || (o === 0x4d4d && v.getUint16(i + 8) === 0x002a)) return i + 6;
+  }
+  return -1;
+}
 export function readExifDate(buf) {
   try {
     const v = new DataView(buf);
-    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return null;
+    if (v.byteLength >= 4 && v.getUint16(0) !== 0xffd8) { const t = findTiffStart(v); return t < 0 ? null : exifDateFrom(v, t, v.byteLength); }
+    if (v.byteLength < 4) return null;
     let p = 2;
     while (p + 4 <= v.byteLength) {
       if (v.getUint8(p) !== 0xff) return null;
@@ -545,7 +557,8 @@ function exifDateFrom(v, t, end) {
 export function readExifGPS(buf) {
   try {
     const v = new DataView(buf);
-    if (v.byteLength < 4 || v.getUint16(0) !== 0xffd8) return null;
+    if (v.byteLength >= 4 && v.getUint16(0) !== 0xffd8) { const t = findTiffStart(v); return t < 0 ? null : exifGpsFrom(v, t, v.byteLength); }
+    if (v.byteLength < 4) return null;
     let p = 2;
     while (p + 4 <= v.byteLength) {
       if (v.getUint8(p) !== 0xff) return null;
