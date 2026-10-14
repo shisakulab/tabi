@@ -104,7 +104,14 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   display: grid; place-items: center; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--ink2) 55%, transparent); background: rgba(255,255,255,.45);
   font: 700 11px var(--serif); color: var(--ink2);
 }
-.sdot { width: 12px; height: 12px; border-radius: 50%; background: var(--seal); border: 2px solid #fff; box-sizing: border-box; }
+/* 引いた地図の季節の名所：まだは白抜き、押したら塗る（凡例の「点線＝まだ・塗り＝押した」に合わせる） */
+.sdot { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2.5px solid var(--seal); box-sizing: border-box; }
+.sdot.got { background: var(--seal); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--seal); }
+/* 引いた地図の、判子を押した場所（数の丸より上に、塗りつぶしで） */
+.mydot {
+  display: grid; place-items: center; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35); font: 700 10px system-ui, sans-serif; color: #fff;
+}
 /* 判子の色の見方（左下） */
 .legend {
   position: fixed; left: 8px; bottom: calc(var(--safe-b) + 34px); z-index: 450; display: grid; gap: 2px;

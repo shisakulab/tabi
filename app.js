@@ -452,11 +452,47 @@ async function drawMap() {
   // とても引いているときは、季節の名所は小さな赤い点にする（大きな判子だと数の丸を隠す）
   const dot = z < 8;
   for (const s of list) {
-    const icon = dot ? L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'sdot' }), iconSize: [12, 12], iconAnchor: [6, 6] }) : hankoIcon(s);
+    const icon = dot ? L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'sdot' + (visitsOf(s.id).length ? ' got' : '') }), iconSize: [12, 12], iconAnchor: [6, 6] }) : hankoIcon(s);
     const m = L.marker([s.lat, s.lng], { icon, title: s.name }).on('click', () => showCard(s));
     m.addTo(layer);
     markers.set(s.id, m);
   }
+  // 大きく引いたときも、判子を押した場所は数の丸に埋もれないよう、塗りつぶした丸で一番上に出す
+  if (z < MIN_ZOOM_ALL) {
+    const shown = dot ? new Set() : new Set(list.map((s) => s.id));
+    for (const g of myStampGroups(b, z, shown)) {
+      const size = g.n > 1 ? 22 : 16;
+      L.marker([g.lat, g.lng], {
+        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mydot', style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+        title: g.n > 1 ? `判子 ${g.n} か所` : g.name, zIndexOffset: 1000,
+      }).on('click', () => (g.n === 1 && g.spot ? showCard(g.spot) : mainMap.setView([g.lat, g.lng], Math.min(z + 3, MIN_ZOOM_ALL), { animate: !reduceMotion() })))
+        .addTo(layer);
+    }
+  }
+}
+
+// 判子を押した場所を、画面で 18px 四方の升ごとにまとめる（引いた地図で重ならないように）。
+// 区画を読んでいない近所の場所は、判子を押したときの位置を使う。skip は判子の絵で出している場所
+function myStampGroups(b, z, skip) {
+  const bySpot = new Map();
+  for (const v of state.visits) {
+    if (skip.has(v.spotId) || bySpot.has(v.spotId)) continue;
+    const spot = spotById(v.spotId);
+    const lat = spot && Number.isFinite(spot.lat) ? spot.lat : v.lat;
+    const lng = spot && Number.isFinite(spot.lng) ? spot.lng : v.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !b.pad(0.1).contains([lat, lng])) continue;
+    bySpot.set(v.spotId, { spot, lat, lng });
+  }
+  const cells = new Map();
+  for (const [id, it] of bySpot) {
+    const p = mainMap.project([it.lat, it.lng], z);
+    const ck = `${Math.floor(p.x / 18)}_${Math.floor(p.y / 18)}`;
+    const c = cells.get(ck) || { n: 0, lat: 0, lng: 0, spot: null, name: '', color: '' };
+    c.n++; c.lat += it.lat; c.lng += it.lng;
+    if (!c.spot) { c.spot = it.spot; c.name = it.spot ? it.spot.name : id; c.color = it.spot ? stampColor(it.spot, !!it.spot.seasons) : TIER_COLOR.near; }
+    cells.set(ck, c);
+  }
+  return [...cells.values()].map((c) => ({ ...c, lat: c.lat / c.n, lng: c.lng / c.n }));
 }
 
 // まとめの丸。点線の丸に数を出す（まだ押していない場所の点線の判子と同じ見た目）
