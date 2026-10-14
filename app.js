@@ -1264,9 +1264,17 @@ function bookCountries() {
 }
 
 // ---------- 設定 ----------
+// いま動いている版（sw.js の VERSION＝キャッシュの名前）。iPhone で新しい版になったか確かめる用
+function verEl() {
+  const el = h('span', { class: 'muted', style: 'font-size:13px;font-weight:normal' });
+  try {
+    caches.keys().then((ks) => { const v = ks.filter((k) => k.startsWith('tabigoyomi-v')).sort((a, b) => parseInt(b.slice(12), 10) - parseInt(a.slice(12), 10))[0]; if (v) el.textContent = `（${v.replace('tabigoyomi-', '')}）`; }).catch(() => {});
+  } catch { /* キャッシュが使えなければ出さない */ }
+  return el;
+}
 function openSettings() {
   showSheet(openSettings, [
-    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定'),
+    h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定 ', verEl()),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）からまとめて判子')),
