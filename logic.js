@@ -666,3 +666,30 @@ export function gpxStops(points, step = GPX_STEP_METERS) {
   }
   return out;
 }
+
+// GPX の点から、日ごとの移動距離（m）を旅のしかた別に出す：{ 'YYYY-MM-DD': { walk|bike|trip: m } }。
+// 点と点が 1km 以上飛んでいるところ（記録の途切れ）は数えない。平均の速さで分ける（時速 8km 未満＝散歩、30km 未満＝サイクリング、それ以上＝旅行の移動）
+export function gpxDayDistances(points) {
+  const days = {};
+  const byDay = new Map();
+  for (const p of points || []) {
+    if (!Number.isFinite(p.time)) continue;
+    const d = todayStr(new Date(p.time));
+    if (!byDay.has(d)) byDay.set(d, []);
+    byDay.get(d).push(p);
+  }
+  for (const [d, list] of byDay) {
+    list.sort((a, b) => a.time - b.time);
+    let meters = 0; let ms = 0;
+    for (let i = 1; i < list.length; i++) {
+      const step = distanceMeters(list[i - 1], list[i]);
+      if (step >= 1000) continue;
+      meters += step; ms += list[i].time - list[i - 1].time;
+    }
+    if (meters < 50) continue;
+    const kmh = ms > 0 ? (meters / 1000) / (ms / 3600000) : 0;
+    const mode = kmh < 8 ? 'walk' : kmh < 30 ? 'bike' : 'trip';
+    days[d] = { [mode]: Math.round(meters) };
+  }
+  return days;
+}

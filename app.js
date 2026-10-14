@@ -3,7 +3,7 @@ import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
-  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, parseGpx, gpxStops, remapVisits, classifyFood, normalizeName,
+  sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, matchPhotoStamps, parseGpx, gpxStops, gpxDayDistances, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
@@ -1430,7 +1430,7 @@ function diaryCalendarNodes() {
       h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, 1); openDiary(); }, 'aria-label': '次の月' }, '›')),
     h('div', { class: 'calwd' }, [...'日月火水木金土'].map((w) => h('span', {}, w))),
     h('div', { class: 'calgrid' }, grid.weeks.flat().map(cell)),
-    h('p', { class: 'muted', style: 'font-size:12px;margin-top:10px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。'),
+    h('p', { class: 'muted', style: 'font-size:12px;margin-top:10px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。Strava などの経路（GPX）を取り込むと、その日の距離も経路の値になります。'),
   ];
 }
 function diaryDayNodes(date) {
@@ -1672,6 +1672,12 @@ async function runGpxImport(files) {
   const stops = gpxStops(points);
   const dated = stops.filter((p) => p.date);
   if (!dated.length) { toast('経路に日時が入っていないため、判子は付けられませんでした'); return; }
+  // その日の距離（日記の「散歩 2.4km（約3,400歩）」）も、経路の方が長ければ経路の値にする（アプリを開いていない間に歩いた分が入る）
+  for (const [day, rec] of Object.entries(gpxDayDistances(points))) {
+    const cur = dist.days[day] || (dist.days[day] = {});
+    for (const [mode, m] of Object.entries(rec)) if (m > (cur[mode] || 0)) { cur[mode] = m; dist.dirty = true; }
+  }
+  await saveDist();
   const spots = await spotsAround(dated, 0.005);
   const { matches } = matchPhotoStamps(dated, spots, state.visits);
   if (!matches.length) { toast('経路の近くに判子の場所はありませんでした'); return; }

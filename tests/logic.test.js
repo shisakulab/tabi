@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -523,4 +523,16 @@ test('gpxStops: 日ごとに20mおきに間引き、時刻なしは日付なし�
   const r = matchPhotoStamps(stops, spots, []);
   assert.deepEqual(r.matches.map((m) => `${m.spotId}_${m.date}`), ['a_2026-10-10']);
   assert.equal(r.withoutLocation, 1);
+});
+
+test('gpxDayDistances: 日ごとの距離、速さで散歩・サイクリングに分け、1km 以上の飛びは数えない', () => {
+  const t = new Date('2026-10-10T09:00:00').getTime();
+  const walk = [0, 100, 200, 300].map((m, i) => ({ ...at(m), time: t + i * 72000 })); // 100m/72秒＝時速5km
+  const jump = { ...at(5300), time: t + 4 * 72000 }; // 5km 飛ぶ
+  const t2 = new Date('2026-10-11T09:00:00').getTime();
+  const bike = [0, 500, 1000].map((m, i) => ({ ...at(m), time: t2 + i * 120000 })); // 500m/2分＝時速15km
+  const r = gpxDayDistances([...walk, jump, ...bike]);
+  assert.deepEqual(Object.keys(r).sort(), ['2026-10-10', '2026-10-11']);
+  assert.ok(Math.abs(r['2026-10-10'].walk - 300) <= 1);
+  assert.ok(Math.abs(r['2026-10-11'].bike - 1000) <= 1);
 });
