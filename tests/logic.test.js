@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, pickGuessedSpot, gpxDayDistances, matchGpxVisits,
+  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import seasons from '../themes/seasons.js';
 
@@ -574,18 +574,4 @@ test('readExifGPS / readExifDate: HEIC（JPEG でない）でも EXIF を探し�
   assert.ok(g && Math.abs(g.lat - (35 + 41 / 60 + 22.2 / 3600)) < 1e-6);
   assert.equal(readExifDate(toHeic(makeJpeg(false))), '2024-05-06');
   assert.equal(readExifGPS(new Uint8Array([0, 0, 0, 8, 1, 2, 3, 4]).buffer), null);
-});
-
-test('pickGuessedSpot: 名前が合う場所を優先、なければ近い場所、low や座標なしは結び付けない', () => {
-  const spots = [
-    { id: 'kinkaku', name: '鹿苑寺', lat: 35.0394, lng: 135.7292 },
-    { id: 'kinkaku2', name: '金閣寺', lat: 35.0394, lng: 135.7293 },
-    { id: 'cafe', name: '喫茶きんかく', lat: 35.0380, lng: 135.7300 },
-  ];
-  assert.equal(pickGuessedSpot({ found: true, place_name: '金閣寺', lat: 35.05, lng: 135.73, confidence: 'medium' }, spots).id, 'kinkaku2');
-  assert.equal(pickGuessedSpot({ found: true, place_name: 'どこかの寺', lat: 35.0381, lng: 135.7300, confidence: 'high' }, spots).id, 'cafe');
-  assert.equal(pickGuessedSpot({ found: true, place_name: 'どこかの寺', lat: 35.10, lng: 135.80, confidence: 'high' }, spots), null);
-  assert.equal(pickGuessedSpot({ found: true, place_name: '金閣寺', lat: 35.05, lng: 135.73, confidence: 'low' }, spots), null);
-  assert.equal(pickGuessedSpot({ found: true, place_name: '金閣寺', lat: 0, lng: 0, confidence: 'high' }, spots), null);
-  assert.equal(pickGuessedSpot({ found: false, place_name: '', lat: 0, lng: 0, confidence: 'low' }, spots), null);
 });

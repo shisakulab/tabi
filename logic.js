@@ -795,25 +795,3 @@ export function exifSummary(buf) {
     return { ifd0: ifd0.size, tags: [...ifd0.keys()].map((k) => k.toString(16)), exif: !!sub, date: !!(sub && sub.has(0x9003)) || ifd0.has(0x0132), gps: !!gps, gpsTags: gps ? gps.size : 0 };
   } catch (e) { return { error: String(e && e.message || e) }; }
 }
-
-// 写真から推定した場所（{ place_name, lat, lng, confidence }）を、旅暦の場所に結び付ける。
-// 名前が合う場所（30km 以内）を優先し、なければ推定した座標から近い場所（high は 300m、medium は 150m まで）。low・座標なしは結び付けない
-export function pickGuessedSpot(guess, spots) {
-  if (!guess || !guess.found || guess.confidence === 'low') return null;
-  const at = { lat: Number(guess.lat), lng: Number(guess.lng) };
-  if (!Number.isFinite(at.lat) || !Number.isFinite(at.lng) || (at.lat === 0 && at.lng === 0)) return null;
-  const want = normalizeName(guess.place_name || '');
-  let byName = null; let near = null;
-  for (const s of spots) {
-    if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) continue;
-    const d = distanceMeters(at, s);
-    const n = normalizeName(s.name || '');
-    if (want.length >= 2 && n.length >= 2 && d <= 30000 && (n === want || n.includes(want) || want.includes(n))) {
-      if (!byName || d < byName.d) byName = { s, d };
-    }
-    if (!near || d < near.d) near = { s, d };
-  }
-  if (byName) return byName.s;
-  const limit = guess.confidence === 'high' ? 300 : 150;
-  return near && near.d <= limit ? near.s : null;
-}
