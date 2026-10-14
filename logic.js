@@ -178,7 +178,8 @@ export function monthlyQuests(spots, date, mode, pos, limit = 5) {
 // 日付と id から決まる順で選ぶので、同じ日のうちは顔ぶれが変わらない（歩いて範囲が動いた分だけ入れ替わる）。
 // stampedToday：今日判子を押した id（押した印を付けて残す）、stampedBefore：前に押した id（出さない）
 export const DAILY_MODES = ['walk', 'bike'];
-export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore, limit = 3) {
+// minutes：回って戻る時間（設定の 15・30・60 分）
+export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore, limit = 3, minutes = LOOP_MINUTES) {
   if (!pos || !DAILY_MODES.includes(mode) || limit <= 0) return [];
   const range = MODES[mode].range;
   const day = typeof date === 'string' ? date.slice(0, 10)
@@ -195,7 +196,7 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
     .filter((s) => s.distance <= range);
   // 散歩・サイクリング：回って戻るとちょうどいい運動量になる 2〜3か所を、回る順に。loop は道のりの見積もり（m）
   if (LOOP_TARGET[mode] && limit >= 2) {
-    const r = walkLoopQuests(cands, pos, day, hash, LOOP_TARGET[mode]);
+    const r = walkLoopQuests(cands, pos, day, hash, loopTarget(mode, minutes));
     if (r.spots.length) return r.spots.slice(0, limit).map((s) => ({ ...s, loop: r.meters }));
   }
   // 自転車：日付で混ぜた順に、まだ選んでいない分類（ご飯・寺社・その他）→ 種類 を先に取る
@@ -218,6 +219,8 @@ export const LOOP_SPEED_KMH = { walk: 5, bike: 15 };
 export const WALK_TARGET_METERS = LOOP_SPEED_KMH.walk * 1000 * LOOP_MINUTES / 60; // 2,500m
 export const BIKE_TARGET_METERS = LOOP_SPEED_KMH.bike * 1000 * LOOP_MINUTES / 60; // 7,500m
 export const LOOP_TARGET = { walk: WALK_TARGET_METERS, bike: BIKE_TARGET_METERS };
+export const LOOP_MINUTE_CHOICES = [15, 30, 60];
+export const loopTarget = (mode, minutes = LOOP_MINUTES) => (LOOP_SPEED_KMH[mode] || 0) * 1000 * minutes / 60;
 export const WALK_DETOUR = 1.25;
 export const STEP_METERS = 0.7;
 export const KIND_DUP_PENALTY = 600; // m 相当

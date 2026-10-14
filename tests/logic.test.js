@@ -324,3 +324,17 @@ test('addTrack：揺れ・精度の悪い位置・飛びは数えない', () => 
   t = addTrack(t, p(0.0509, 2000)); // 10分以上あいた
   assert.ok(Math.abs(t.meters - 100) < 3);
 });
+
+test('今日のお題の長さ：15分なら道のりも短く', () => {
+  const pos = { lat: 35.68, lng: 139.76 };
+  const kinds = ['cafe', 'shrine', 'museum'];
+  const spots = Array.from({ length: 60 }, (_, i) => {
+    const r = 0.001 + 0.00025 * i; const a = i * 2.4;
+    return { id: `m${i}`, kind: kinds[i % 3], tier: 'near', lat: pos.lat + r * Math.cos(a), lng: pos.lng + r * Math.sin(a) / Math.cos(pos.lat * Math.PI / 180) };
+  });
+  const none = new Set();
+  const q15 = dailyQuests(spots, '2026-10-14', 'walk', pos, none, none, 3, 15);
+  const q60 = dailyQuests(spots, '2026-10-14', 'walk', pos, none, none, 3, 60);
+  assert.ok(Math.abs(q15[0].loop - 1250) <= 400, `15分 ${q15[0].loop}m`);
+  assert.ok(q60[0].loop > q15[0].loop * 2, `60分 ${q60[0].loop}m`);
+});

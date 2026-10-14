@@ -4,7 +4,7 @@ import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, remapVisits, classifyFood,
-  MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
+  MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
 } from './logic.js';
 
 const GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png';
@@ -558,7 +558,7 @@ function currentQuests() {
   // 範囲の1.5倍より離れたものと、前に判子を押したものだけ入れ替える
   const dayKey = d.toDateString();
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(LS + 'daily.' + state.mode) || 'null'); } catch { /* 読めなければ選び直す */ }
+  try { saved = JSON.parse(localStorage.getItem(LS + 'daily.' + state.mode + '.' + loopMinutes()) || 'null'); } catch { /* 読めなければ選び直す */ }
   if (!saved || saved.day !== dayKey || saved.mode !== state.mode || !Array.isArray(saved.items)) saved = { day: dayKey, mode: state.mode, items: [] };
   const byId = new Map(allLoaded().map((s) => [s.id, s]));
   const limit = MODES[state.mode].range * 1.5;
@@ -567,7 +567,7 @@ function currentQuests() {
   const kept = keepItems.filter((it) => byId.has(it.id)).map((it) => ({ ...byId.get(it.id), distance: distanceMeters(state.pos, it), daily: true }));
   const skip = new Set([...used, ...keepItems.map((it) => it.id)]);
   const need = want - keepItems.length;
-  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id)), d, state.mode, state.pos, today, before, need) : [];
+  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id)), d, state.mode, state.pos, today, before, need, loopMinutes()) : [];
   // 回る順（選んだときの順）のまま
   let daily = [...kept, ...add];
   let loop = saved.loop || 0;
@@ -577,7 +577,7 @@ function currentQuests() {
       const r = bestLoop(state.pos, items);
       items = r.order; loop = r.meters;
     }
-    try { localStorage.setItem(LS + 'daily.' + state.mode, JSON.stringify({ day: dayKey, mode: state.mode, items, loop })); } catch { /* 保存できなくても続ける */ }
+    try { localStorage.setItem(LS + 'daily.' + state.mode + '.' + loopMinutes(), JSON.stringify({ day: dayKey, mode: state.mode, items, loop })); } catch { /* 保存できなくても続ける */ }
     const rank = new Map(items.map((it, i) => [it.id, i]));
     daily.sort((a, b) => rank.get(a.id) - rank.get(b.id));
   } else {
@@ -588,6 +588,9 @@ function currentQuests() {
   return [...monthly, ...daily];
 }
 // 回る道のりを「約2.5km・約3,600歩・約30分」に（散歩は時速5km、サイクリングは時速15km で歩数なし）
+// 今日のお題の長さ（分）。設定で 15・30・60 から選ぶ。初期は 30
+function loopMinutes() { try { const v = Number(localStorage.getItem(LS + 'loopmin')); return LOOP_MINUTE_CHOICES.includes(v) ? v : 30; } catch { return 30; } }
+function setLoopMinutes(v) { try { localStorage.setItem(LS + 'loopmin', String(v)); } catch { /* 保存できなくても続ける */ } drawQuest(); }
 const loopText = (m, mode = state.mode) => [`約${(m / 1000).toFixed(1)}km`, mode === 'walk' ? `約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩` : null, `約${Math.round(m / (LOOP_SPEED_KMH[mode] * 1000) * 60 / 5) * 5}分`].filter(Boolean).join('・');
 function questDone(spot) {
   const d = now();
@@ -623,7 +626,7 @@ function openQuests() {
   showSheet(openQuests, [
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, questTitle()),
     h('p', { class: 'sub' }, `見頃の月に行って判子を押すと、季節の判子になります。旅のしかた（${MODES[state.mode].label}）と今いる場所に合わせて並べています。${DAILY_MODES.includes(state.mode) ? '散歩・サイクリングでは、近くのまだ行っていない場所から「今日のお題」も毎日選びます（ご飯・寺社・その他から1つずつ）。' : ''}`),
-    state.dailyLoop ? h('p', { class: 'sub' }, `今日の${state.mode === 'walk' ? '散歩' : 'サイクリング'}：上から順に回って戻ると ${loopText(state.dailyLoop)}（${state.mode === 'walk' ? '少し速めに歩いて時速5km' : 'ゆっくり時速15km'}、道は直線の1.25倍で見積もり）。毎日続ける運動として約30分にしています。厚生労働省のガイドでは、普段の生活の動き（1日60分・約8,000歩）に加えて、息が弾む程度の運動を週60分以上が目安です。`) : null,
+    state.dailyLoop ? h('p', { class: 'sub' }, `今日の${state.mode === 'walk' ? '散歩' : 'サイクリング'}：上から順に回って戻ると ${loopText(state.dailyLoop)}（${state.mode === 'walk' ? '少し速めに歩いて時速5km' : 'ゆっくり時速15km'}、道は直線の1.25倍で見積もり）。毎日続ける運動として約${loopMinutes()}分にしています（長さは設定で変えられます）。厚生労働省のガイドでは、普段の生活の動き（1日60分・約8,000歩）に加えて、息が弾む程度の運動を週60分以上が目安です。`) : null,
     h('ul', { class: 'list' }, qs.map((s) => h('li', {},
       h('button', { class: 'rec nophoto', type: 'button', onclick: () => { closeSheet(); focusSpot(s); } },
         h('div', {},
@@ -1091,6 +1094,9 @@ function bookMore() {
         h('input', { type: 'checkbox', checked: setting('vibrate'), onchange: (e) => setSetting('vibrate', e.target.checked) }), '押したら振動する'),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('sound'), onchange: (e) => setSetting('sound', e.target.checked) }), '効果音（iPhone はマナーモードだと鳴らないことがあります）'),
+      h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, '今日のお題の長さ（回って戻る時間）',
+        h('div', { class: 'chips' }, LOOP_MINUTE_CHOICES.map((m) => h('button', { class: 'chip' + (loopMinutes() === m ? ' on' : ''), type: 'button',
+          onclick: () => { setLoopMinutes(m); openBook(); } }, `${m}分`)))),
       h('label', { style: 'display:flex;gap:8px;align-items:center' },
         h('input', { type: 'checkbox', checked: setting('nearalert'), onchange: (e) => toggleNearAlert(e.target.checked) }), '判子を押せる場所に着いたら知らせる（振動・通知）'),
       h('p', { class: 'muted', style: 'margin:0' }, nearAlertNote()),
