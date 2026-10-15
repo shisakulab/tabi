@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
 import { readFileSync } from 'node:fs';
@@ -747,4 +747,32 @@ test('world-foods.json: 国は国境データの名前、国ごとに10品まで
   }
   assert.ok(Object.keys(per).length >= 50, '国の数');
   assert.ok(Object.values(per).every((n) => n <= 10));
+});
+
+test('festivalSpot: 開催月があれば季節の名所と同じ（その月だけ季節）、なければ普通の場所', () => {
+  const a = festivalSpot(['Q1', '祇園祭', 35, 135.7, [7], '日本', '京都府', ['yama', 'sandai'], '']);
+  assert.equal(a.id, 'f_Q1'); assert.equal(a.kind, 'festival'); assert.deepEqual(a.lists, ['festival', 'yama']);
+  assert.equal(a.radius, 500); assert.match(a.note, /三大祭/);
+  assert.ok(seasonOf(a, '2026-07-10')); assert.equal(seasonOf(a, '2026-08-10'), null);
+  assert.equal(markKindOf(a), 'festival');
+  const b = festivalSpot(['Q2', 'Les Santes', 41.6, 2.4, [], 'スペイン王国', '', [], 'Les Santes']);
+  assert.equal(b.seasons, undefined); assert.equal(b.pref, ''); assert.equal(b.country, 'スペイン王国'); assert.equal(b.en, 'Les Santes');
+  assert.deepEqual(b.lists, ['festival']);
+});
+
+test('data/festivals.json: ユネスコ山・鉾・屋台行事は33件そろい、座標は日本国内・月ありで、id は重ならない', () => {
+  const items = JSON.parse(readFileSync(new URL('../data/festivals.json', import.meta.url), 'utf8')).items;
+  const ids = new Set();
+  for (const [id, name, lat, lng, months, country] of items) {
+    assert.ok(!ids.has(id), id); ids.add(id);
+    assert.ok(name, id);
+    assert.ok(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180, id);
+    assert.ok(months.every((m) => m >= 1 && m <= 12) && months.length <= 4, id);
+    if (country === '日本') assert.ok(lat > 24 && lat < 46 && lng > 122 && lng < 146, name);
+  }
+  const yama = items.filter((r) => r[7].includes('yama'));
+  assert.equal(yama.length, 33);
+  assert.ok(yama.every((r) => r[4].length >= 1 && r[5] === '日本' && r[6]));
+  assert.equal(items.filter((r) => r[7].includes('sandai')).length, 3);
+  assert.ok(items.filter((r) => r[5] === '日本').length > 500);
 });

@@ -4,7 +4,7 @@ import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
-  MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
+  MODES, normalizeMode, festivalSpot, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
 } from './logic.js';
 
@@ -156,9 +156,10 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods, climate, foodPhotos, foodShops, worldFoods] = await Promise.all([
+  const [lists, coords, meta, foods, climate, foodPhotos, foodShops, worldFoods, festivals] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
     fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}), fetchJson('data/food-shops.json', {}), fetchJson('data/world-foods.json', []),
+    fetchJson('data/festivals.json', { items: [] }),
   ]);
   state.foods = foods;
   state.foodPhotos = foodPhotos;
@@ -186,7 +187,10 @@ async function loadCatalog() {
       lists: ['seasons'], seasons: [{ months: s.months, label: s.label, mark: s.mark }], note: s.note || '',
     };
   });
+  // 祭り（Wikidata：data/festivals.json）。開催月がある祭りは季節の名所と同じ仕組み（その月に押すと季節の判子）、無い祭りは普通の場所
+  for (const row of festivals.items || []) state.seasonSpots.push(festivalSpot(row));
   state.lists.push({ key: 'seasons', name: '季節の名所', note: '見頃の月に行くと季節の判子' });
+  state.lists.push({ key: 'yama', name: '山・鉾・屋台行事（ユネスコ）', note: '2016年にユネスコ無形文化遺産になった33の祭り。開催の月に行くと季節の判子' });
   // 国宝を場所ごとにまとめたことなどで spotId が変わった判子を救う（lists.aliases：子 id → 親 id）
   const remapped = remapVisits(state.visits, lists.aliases || {});
   if (remapped.changed) {
@@ -470,6 +474,7 @@ const KIND_SVG = (() => {
     sight: s('M6 21V4M6 5h11l-2.5 3.5L17 12H6'),
     view: s('M2.5 18h19M6.5 18a5.5 5.5 0 0 1 11 0M12 6v3M4.5 9 6.5 11M19.5 9 17.5 11'),
     water: s('M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z'),
+    festival: s('M9 3h6M8.5 5h7c2.2 2.5 2.2 11.5 0 14h-7c-2.2-2.5-2.2-11.5 0-14zM9.5 19.5h5M12 19.5V22M7.8 9h8.4M7.8 14.5h8.4'),
     pin: s('M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11zM12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'),
   };
 })();
@@ -496,7 +501,7 @@ function hankoIcon(spot, far = false) {
   const color = mine.length && lv ? levelColor(baseColor, lv) : baseColor;
   const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : '', lv ? 'lv' + lv : '', far && !mine.length && !went ? 'far' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : null;
-  const markEl = () => (isSeason ? h('span', {}, mark) : kindMark(spot));
+  const markEl = () => (isSeason && spot.kind !== 'festival' ? h('span', {}, mark) : kindMark(spot));
   // 押した場所に写真が付いていれば、文字の代わりに丸く切り抜いた写真を敷く（枠の色はそのまま残す）
   const photoSeal = mine.length ? latestPhotoForSpot(spot.id) : null;
   const face = photoSeal ? h('div', { class: 'face photo' }) : h('div', { class: 'face' }, markEl());
@@ -542,7 +547,9 @@ async function drawMap() {
   const b = mainMap.getBounds();
   const z = mainMap.getZoom();
   const nearOk = modeAllows({ tier: 'near' }, state.mode);
-  const seasons = state.seasonSpots.filter((s) => Number.isFinite(s.lat) && b.contains([s.lat, s.lng]) && modeAllows(s, state.mode));
+  // 祭りは数が多いので、ユネスコの祭り・日本三大祭と判子を押した祭りのほかは、寄ったとき（z9〜）だけ出す
+  const seasons = state.seasonSpots.filter((s) => Number.isFinite(s.lat) && b.contains([s.lat, s.lng]) && modeAllows(s, state.mode)
+    && (s.kind !== 'festival' || z >= 9 || s.lists.includes('yama') || visitsOf(s.id).length > 0));
   // ご当地グルメのお店（ナイフとフォークのマーク）。寄ったとき（MIN_ZOOM_SHOP 以上）だけ、見えている範囲のものを出す
   const shops = z >= MIN_ZOOM_SHOP ? state.shopSpots.filter((s) => b.contains([s.lat, s.lng])).slice(0, 150) : [];
   let list; let groups;
@@ -902,6 +909,7 @@ function gmapUrl(spot, route) {
 function spotTags(spot) {
   if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
   if (spot.kind === 'foodshop') return ['ご当地のお店'];
+  if (spot.kind === 'festival') return ['祭り', ...(spot.lists || []).filter((k) => k === 'yama').map(() => 'ユネスコ 山・鉾・屋台行事')];
   return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
 }
 

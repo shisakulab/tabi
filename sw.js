@@ -1,6 +1,6 @@
 // キャッシュ優先。ファイルを変えたら VERSION を上げる
 // Leaflet は vendor/ に同梱。地図タイルはキャッシュしない。data/ は取得時にキャッシュ
-const VERSION = 'tabigoyomi-v74';
+const VERSION = 'tabigoyomi-v75';
 const FILES = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const FILES = [
   './data/food-photos.json',
   './data/food-shops.json',
   './data/world-foods.json',
+  './data/festivals.json',
   './data/kana.json',
   './data/climate.json',
   './data/countries.geojson',

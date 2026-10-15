@@ -837,8 +837,19 @@ export function modesOfDay(visits, distRec) {
 export const WAFU_MONTHS = ['睦月', '如月', '弥生', '卯月', '皐月', '水無月', '文月', '葉月', '長月', '神無月', '霜月', '師走'];
 export const wafuMonth = (month) => WAFU_MONTHS[month - 1] || `${month}月`;
 
+// 祭り（data/festivals.json の1行 [id, name, lat, lng, months, country, pref, flags, en]）を場所にする。
+// 開催月があれば季節の名所と同じ仕組み（seasons）。月がなければ普通の場所（季節の判子にしない）。flags：yama＝ユネスコ山・鉾・屋台行事、sandai＝日本三大祭
+export function festivalSpot([qid, name, lat, lng, months, country, pref, flags, en]) {
+  const yama = (flags || []).includes('yama');
+  return {
+    id: `f_${qid}`, kind: 'festival', name, en: en || '', pref: country === '日本' ? pref || '' : '', country: country || '日本', lat, lng, tier: 'list', radius: yama ? 500 : 300,
+    lists: ['festival', ...(yama ? ['yama'] : [])], ...(months && months.length ? { seasons: [{ months, label: '祭り', mark: '祭' }] } : {}),
+    note: (flags || []).includes('sandai') ? '日本三大祭の一つ。' : '',
+  };
+}
+
 // 地図の点に出す、場所の種類のマーク。神社＝shrine（鳥居）・お寺＝temple（卍）・飲食＝food（ナイフとフォーク）・ほか
-const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', foodshop: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view' };
+const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', foodshop: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view', festival: 'festival' };
 export function markKindOf(spot) {
   if (!spot) return 'pin';
   if (KIND_MARK[spot.kind]) return KIND_MARK[spot.kind];
