@@ -830,3 +830,14 @@ test("dailyCount: 1〜3 に散らばり、同じ日は同じ数。1か所の日�
   assert.equal(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 2).length, 2);
   assert.equal(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3).length, 3);
 });
+
+test("記録の取り消し・写真の追加：判子・ご当地・通った印・印の取り消しと写真の追加・差し替え・外すが、確認つきで日記と場所の詳細に付いている", () => {
+  const src = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  for (const fn of ["deleteVisit", "deleteMealAny", "undoPassed", "deleteSeal", "addPhotosToVisit", "replaceSealPhoto", "removeSealPhoto", "placeRecordsEl", "visitRecordRow"]) assert.match(src, new RegExp("function " + fn + "\\("), fn);
+  for (const fn of ["deleteVisit", "deleteMealAny", "undoPassed", "deleteSeal", "removeSealPhoto"]) {
+    const body = src.slice(src.indexOf("function " + fn + "("), src.indexOf("function " + fn + "(") + 600);
+    assert.match(body, /confirm\(/, fn + " は確認を出す");
+  }
+  assert.ok((src.match(/placeRecordsEl\(/g) || []).length >= 3, "カードとポップアップに記録の一覧");
+  assert.match(src, /addPhotosToVisit\(v, \(\) => openStamped/, "判子を押した直後のシートに写真を追加");
+});

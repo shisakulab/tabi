@@ -872,6 +872,119 @@ function diaryBtn(spotId, style = '') {
   const d = dates[0];
   return h('button', { class: 'btn diarybtn', type: 'button', style, onclick: () => openDiaryOn(d) }, `日記 ${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`);
 }
+// ---------- 記録の取り消し・写真の追加 ----------
+// 自分で付けたもの（判子・印と写真とメモ・ご当地の「食べた」・通った印）は、日記のその日の詳細と場所の詳細（カード・ポップアップ）から1件ずつ取り消せる（確認は1回）。
+// 判子には、あとから写真（複数可）を付けられる。付けた写真は印（写真・メモ）の記録になり、帳面のマス・カレンダー・地図・ビューアに出る
+const MINI_BTN = 'min-height:32px;padding:0 10px;font-size:13px';
+async function recordsChanged(reopen) {
+  await loadData();
+  render();
+  nearSig = '';
+  updateNear();
+  if (reopen) reopen();
+}
+// 写真を選ぶ（端末の写真・カメラ）。選ばずに閉じたら空
+function choosePhotos(multiple) {
+  return new Promise((resolve) => {
+    const input = h('input', { type: 'file', accept: 'image/*', hidden: true, multiple: !!multiple });
+    input.addEventListener('change', () => { resolve([...input.files]); input.remove(); });
+    input.addEventListener('cancel', () => { resolve([]); input.remove(); });
+    document.body.append(input);
+    input.click();
+  });
+}
+async function deleteVisit(v, reopen) {
+  const s = spotById(v.spotId);
+  if (!confirm(`${s ? s.name : 'この場所'}の ${todayStr(new Date(v.at))} の判子を取り消しますか？（この判子に付いたご当地の「食べた」も消えます。写真・メモの記録は残ります）`)) return;
+  try {
+    await db.remove('visits', v.id);
+    for (const m of state.meals.filter((x) => x.visitId === v.id)) { await db.remove('meals', m.id); if (m.photoId) await db.remove('photos', m.photoId); }
+    await recordsChanged(reopen);
+    toast('判子を取り消しました');
+  } catch (err) { toast('取り消せませんでした：' + (err && err.message ? err.message : err)); }
+}
+async function deleteMealAny(m, reopen) {
+  if (!confirm(`ご当地「${m.name}」の記録（${m.at}）を取り消しますか？`)) return;
+  try {
+    await db.remove('meals', m.id);
+    if (m.photoId) await db.remove('photos', m.photoId);
+    await recordsChanged(reopen);
+    toast('記録を取り消しました');
+  } catch (err) { toast('取り消せませんでした：' + (err && err.message ? err.message : err)); }
+}
+async function undoPassed(spotId, reopen) {
+  const s = spotById(spotId);
+  if (!confirm(`${s ? s.name : 'この場所'}の「通った」印を取り消しますか？`)) return;
+  delete passed()[spotId]; delete passedCnt()[spotId]; delete passedPos()[spotId];
+  savePassed();
+  await recordsChanged(reopen);
+  toast('「通った」印を取り消しました');
+}
+// 押した判子に、あとから写真を付ける（複数可）。1枚ごとに印（写真・メモ）の記録にして、その判子とつなぐ
+async function addPhotosToVisit(v, reopen) {
+  const files = await choosePhotos(true);
+  if (!files.length) return;
+  const s = spotById(v.spotId);
+  const date = todayStr(new Date(v.at));
+  let n = 0;
+  for (const f of files) {
+    try {
+      const photoId = db.newId();
+      await db.put('photos', { id: photoId, blob: await resizePhoto(f) });
+      await db.put('seals', { id: db.newId(), type: MEMO_TYPE, at: date, spotId: v.spotId, pref: (s && s.pref) || '', note: '', photoId, visitId: v.id, lat: Number.isFinite(v.lat) ? v.lat : (s && s.lat) ?? null, lng: Number.isFinite(v.lng) ? v.lng : (s && s.lng) ?? null });
+      n++;
+    } catch (err) { toast('写真を付けられませんでした：' + (err && err.message ? err.message : err)); }
+  }
+  if (n) { await recordsChanged(reopen); toast(`写真を ${n} 枚付けました`); }
+}
+async function replaceSealPhoto(s, reopen) {
+  const files = await choosePhotos(false);
+  if (!files.length) return;
+  try {
+    const photoId = db.newId();
+    await db.put('photos', { id: photoId, blob: await resizePhoto(files[0]) });
+    await db.put('seals', { ...s, photoId });
+    if (s.photoId) await db.remove('photos', s.photoId);
+    await recordsChanged(reopen);
+    toast('写真を差し替えました');
+  } catch (err) { toast('差し替えられませんでした：' + (err && err.message ? err.message : err)); }
+}
+// 写真を外す：ひとことが残っていれば写真だけ外し、写真だけの記録なら記録ごと消す
+async function removeSealPhoto(s, reopen) {
+  const onlyPhoto = !s.note && s.type === MEMO_TYPE;
+  if (!confirm(onlyPhoto ? 'この写真を外しますか？（写真だけの記録なので、記録も消えます）' : 'この記録から写真を外しますか？')) return;
+  try {
+    if (s.photoId) await db.remove('photos', s.photoId);
+    if (onlyPhoto) await db.remove('seals', s.id); else await db.put('seals', { ...s, photoId: null });
+    await recordsChanged(reopen);
+    toast('写真を外しました');
+  } catch (err) { toast('外せませんでした：' + (err && err.message ? err.message : err)); }
+}
+// 判子の1行：日付・旅のしかた・押し方、写真を追加・取り消す
+function visitRecordRow(v, reopen) {
+  const kind = v.source === 'auto' ? '自動' : v.source === 'photo' ? '写真から' : v.source === 'tap' ? '' : '';
+  return h('div', { class: 'vrec' },
+    h('span', {}, `${todayStr(new Date(v.at))}　判子${v.seasonal ? '（季節）' : ''}${MODE_VERB[v.mode] ? '　' + MODE_VERB[v.mode] : ''}${kind ? '　' + kind : ''}`),
+    h('span', { class: 'vbtns' },
+      h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => addPhotosToVisit(v, reopen) }, '写真を追加'),
+      h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteVisit(v, reopen) }, '取り消す')));
+}
+// 場所の詳細（カード・ポップアップ）の「この場所の記録」：判子・印と写真・ご当地・通った印を1件ずつ
+function placeRecordsEl(spotId, reopen) {
+  const visits = [...visitsOf(spotId)].sort((a, b) => b.at - a.at);
+  const seals = state.seals.filter((s) => s.spotId === spotId).sort((a, b) => (a.at < b.at ? 1 : -1));
+  const meals = state.meals.filter((m) => m.spotId === spotId).sort((a, b) => (a.at < b.at ? 1 : -1));
+  const pass = passed()[spotId] ? passCountOf(spotId) || 1 : 0;
+  if (!visits.length && !seals.length && !meals.length && !pass) return null;
+  return h('details', { class: 'placerec' },
+    h('summary', {}, `この場所の記録（判子 ${visits.length}・印と写真 ${seals.length}${meals.length ? `・ご当地 ${meals.length}` : ''}${pass ? '・通った' : ''}）`),
+    visits.map((v) => visitRecordRow(v, reopen)),
+    seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true, reopen))),
+    meals.map((m) => h('div', { class: 'vrec' }, h('span', {}, `${m.at}　ご当地 ${m.name}`),
+      h('span', { class: 'vbtns' }, h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteMealAny(m, reopen) }, '取り消す')))),
+    pass ? h('div', { class: 'vrec' }, h('span', {}, `通った印（${pass}回）`),
+      h('span', { class: 'vbtns' }, h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => undoPassed(spotId, reopen) }, '取り消す'))) : null);
+}
 function showCard(spot) {
   closeCard();
   const d = now();
@@ -895,6 +1008,7 @@ function showCard(spot) {
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     stampDatesEl(spot.id),
     myPhotosEl(spot.id),
+    placeRecordsEl(spot.id, () => showCard(spot)),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す'),
       diaryBtn(spot.id)),
@@ -1037,6 +1151,9 @@ function openStamped(spot, season) {
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, sealTypeFor(spot) ? '印・写真を記録する' : '写真・メモを残す'),
       h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'あとで')),
+    h('div', { style: 'display:flex;gap:8px;justify-content:center;margin-top:8px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { const v = [...visitsOf(spot.id)].sort((a, b) => b.at - a.at)[0]; if (v) addPhotosToVisit(v, () => openStamped(spot, season)); } }, '写真を追加'),
+      h('button', { class: 'btn danger', type: 'button', onclick: async () => { const v = [...visitsOf(spot.id)].sort((a, b) => b.at - a.at)[0]; if (!v) return; await deleteVisit(v, () => closeSheet()); } }, '判子を取り消す')),
   ], () => sheetEl.classList.add('small'));
 }
 
@@ -1484,6 +1601,7 @@ function openMasuDetail(id, name, pref) {
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
     stampDatesEl(id),
     myPhotosEl(id),
+    placeRecordsEl(id, () => openMasuDetail(id, name, pref)),
     h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px' },
       hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: () => showOnMap(id, spot.lat, spot.lng) }, '地図で見る') : null,
       hasCoord ? h('a', { class: 'btn', href: gmapUrl(spot, true), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, '経路') : null,
@@ -1610,7 +1728,7 @@ function bookSpots() {
   ];
 }
 
-function sealRow(s, withDelete) {
+function sealRow(s, withDelete, reopen) {
   const spot = s.spotId ? spotById(s.spotId) : null;
   const where = [spot ? spot.name : '', s.pref].filter(Boolean).join('・');
   const canGo = (spot && Number.isFinite(spot.lat)) || (Number.isFinite(s.lat) && Number.isFinite(s.lng));
@@ -1623,14 +1741,16 @@ function sealRow(s, withDelete) {
       h('div', { class: 't' }, `${s.type}　${fmtDate(s.at)}`),
       where ? h('div', { class: 'n' }, where) : null,
       s.note ? h('div', { class: 'n', style: 'white-space:normal' }, s.note) : null,
-      withDelete ? h('button', { class: 'btn danger', type: 'button', style: 'min-height:32px;margin-top:6px;padding:0 10px;font-size:13px', onclick: () => deleteSeal(s) }, '削除') : null));
+      withDelete ? h('div', { class: 'vbtns', style: 'margin-top:6px;flex-wrap:wrap' },
+        s.photoId ? h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => replaceSealPhoto(s, reopen) }, '写真を差し替え') : h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => replaceSealPhoto(s, reopen) }, '写真を追加'),
+        s.photoId ? h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => removeSealPhoto(s, reopen) }, '写真を外す') : null,
+        h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteSeal(s, reopen) }, '取り消す')) : null));
 }
-async function deleteSeal(s) {
-  if (!confirm('この記録を削除しますか？')) return;
+async function deleteSeal(s, reopen) {
+  if (!confirm('この記録を取り消しますか？')) return;
   await db.remove('seals', s.id);
   if (s.photoId) await db.remove('photos', s.photoId);
-  await loadData();
-  render();
+  await recordsChanged(reopen);
 }
 
 // ---------- ご当地グルメ ----------
@@ -2160,11 +2280,15 @@ function diaryDayNodes(date) {
           h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || '', canGo ? ' ›' : ''));
         // 押すと、地図のその場所へ移ってカードを開く（位置のない判子は押せない）
         if (canGo) { row.setAttribute('role', 'button'); row.tabIndex = 0; row.onclick = () => showOnMap(v.spotId, v.lat, v.lng); }
-        return row;
+        return h('div', {}, row,
+          h('div', { class: 'vbtns', style: 'margin:2px 0 6px 34px' },
+            h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => addPhotosToVisit(v) }, '写真を追加'),
+            h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteVisit(v) }, '取り消す')));
       }),
       d.meals.map((m) => h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto'), style: 'margin-top:6px' },
         m.photoId ? viewable(imgFor(m.photoId, 'ph'), () => [itemOfMeal(m)]) : null,
-        h('div', {}, h('div', { class: 't' }, `ご当地　${m.name}`), m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null))),
+        h('div', {}, h('div', { class: 't' }, `ご当地　${m.name}`), m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null,
+          h('button', { class: 'btn danger', type: 'button', style: 'margin-top:6px;' + MINI_BTN, onclick: () => deleteMealAny(m) }, '取り消す')))),
       d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true))),
       empty ? h('p', { class: 'muted' }, '記録はありません。') : null));
   // 左右になでても移れる（縦のなでは、シートを閉じる・スクロールに任せる）
