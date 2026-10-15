@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -88,6 +88,13 @@ test('dataURLToBlob: data URL から元のバイト列に戻る（大きくて�
   assert.equal(b.type, 'image/jpeg');
   assert.deepEqual(new Uint8Array(await b.arrayBuffer()), bytes);
   assert.throws(() => dataURLToBlob('abc'));
+});
+
+test('majorityMonths: 半数以上の場所でベストに入る月だけ、無ければ空', () => {
+  assert.deepEqual(majorityMonths([[5, 6], [5, 6, 7], [6, 7], [10]]), [5, 6, 7]);
+  assert.deepEqual(majorityMonths([[5, 6], [7, 8]]), [5, 6, 7, 8]);
+  assert.deepEqual(majorityMonths([[1], [2], [3]]), []);
+  assert.deepEqual(majorityMonths([null, []]), []);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

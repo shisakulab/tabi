@@ -19,7 +19,7 @@
 //   4. 月ごとの「行きやすさ」の点数を出す（下の scoreMonth 参照）。上位のうち最高点の85%以上を「ベスト」とする
 //
 // 行きやすさの点数のルール（ここだけに置く。logic.js には入れない）：
-//   - 気温スコア：最高気温の平均が 20〜26℃ のとき満点(1)。それより外れたら、はみ出した分（℃）に応じて
+//   - 気温スコア：最高気温の平均が 18〜26℃ のとき満点(1)。それより外れたら、はみ出した分（℃）に応じて
 //     over/8 だけ減点（max(0, 1 - over/8)）。
 //   - 雨スコア：月の降水量が 150mm まで満点(1)。それを超えた分に応じて減点し、400mm（超えた分250mm）で
 //     スコア0（雨季を避ける）。
@@ -131,7 +131,7 @@ async function fetchClimate(lat, lng) {
 function tempScore(tMax) {
   if (tMax == null) return 0;
   let over = 0;
-  if (tMax < 20) over = 20 - tMax;
+  if (tMax < 18) over = 18 - tMax;
   else if (tMax > 26) over = tMax - 26;
   return Math.max(0, 1 - over / 8);
 }

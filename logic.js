@@ -814,3 +814,12 @@ export function exifSummary(buf) {
     return { ifd0: ifd0.size, tags: [...ifd0.keys()].map((k) => k.toString(16)), exif: !!sub, date: !!(sub && sub.has(0x9003)) || ifd0.has(0x0132), gps: !!gps, gpsTags: gps ? gps.size : 0 };
   } catch (e) { return { error: String(e && e.message || e) }; }
 }
+
+// 国のベストシーズン：その国の各場所のベスト月（配列の配列）のうち、半数以上の場所で入っている月だけ。無ければ []
+export function majorityMonths(bestLists) {
+  const lists = (bestLists || []).filter((b) => Array.isArray(b) && b.length);
+  if (!lists.length) return [];
+  const out = [];
+  for (let m = 1; m <= 12; m++) if (lists.filter((b) => b.includes(m)).length * 2 >= lists.length) out.push(m);
+  return out;
+}

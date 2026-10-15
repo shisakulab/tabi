@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -1423,13 +1423,14 @@ let countryDetail = null;
 function countryBestMonths(spots, country) {
   if (!state.climate) return null;
   const cells = listProgress(state.visits, spots, 'heritage').cells.filter((c) => (state.catalog.get(c.id) || {}).country === country);
-  const months = new Set();
-  for (const c of cells) {
+  // その国の世界遺産の半数以上でベストに入っている月だけ
+  const lists = cells.map((c) => {
     const key = state.climate.spots[c.id];
     const grid = key && state.climate[key];
-    if (grid && grid.best) grid.best.forEach((m) => months.add(m));
-  }
-  return months.size ? formatBestMonths([...months]) : null;
+    return grid && grid.best;
+  });
+  const months = majorityMonths(lists);
+  return months.length ? formatBestMonths(months) : null;
 }
 function bookCountryDetail(country) {
   const spots = globalSpots();
