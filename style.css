@@ -369,6 +369,27 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .dayhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .dayhead h3 { margin: 0; text-align: center; flex: 1; }
 .daynav { min-width: 44px; min-height: 44px; padding: 0; font-size: 20px; }
+/* 帳面のマスの詳細：下からせり上がるポップアップ（帳面のスクロール位置は動かさない） */
+.popwrap { position: fixed; inset: 0; z-index: 850; pointer-events: none; }
+.popback { position: absolute; inset: 0; background: rgba(0,0,0,.25); pointer-events: auto; animation: fadein .2s ease-out; }
+.popup {
+  position: absolute; left: 0; right: 0; bottom: 0; max-width: 560px; margin: 0 auto; max-height: 78%; display: flex; flex-direction: column;
+  background: var(--paper); border: 1px solid var(--ink); border-bottom: 0; border-radius: 16px 16px 0 0; pointer-events: auto;
+  padding-bottom: var(--safe-b); animation: popup-rise .25s ease-out; touch-action: pan-y;
+}
+.popgrab { flex: none; display: grid; place-items: center; height: 28px; cursor: grab; }
+.popgrab span { width: 40px; height: 4px; border-radius: 2px; background: var(--line); }
+.popbody { overflow-y: auto; padding: 0 14px 14px; -webkit-overflow-scrolling: touch; }
+@keyframes popup-rise { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .popup, .popback { animation: none; } }
+.spotinfo:empty { display: none; }
+.myphotos { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 2px; }
+.myphotos .myph { flex: none; width: 72px; height: 72px; object-fit: cover; border-radius: 10px; }
+.stampline.go { cursor: pointer; }
+.stampline.go:active { background: var(--line); }
+.rec:has(img.ph.big) { flex-wrap: wrap; }
+.rec img.ph.big { width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
 .stampdates { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .stampdate { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--ink); font-size: 14px; }
 .calday .more { font-size: 8px; color: var(--ink2); line-height: 1; }

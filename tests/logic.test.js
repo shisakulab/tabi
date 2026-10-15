@@ -9,6 +9,7 @@ import {
 import { dataURLToBlob } from '../db.js';
 import { readFileSync } from 'node:fs';
 import { CLOSED_SPOTS, dropClosed } from '../tools/build-spots.mjs';
+import { shardOf, SHARDS } from '../tools/build-photos.mjs';
 import seasons from '../themes/seasons.js';
 
 const at = (m, lat = 35, lng = 135) => ({ lat: lat + m / 111195, lng }); // 北へ m メートル
@@ -160,6 +161,20 @@ test('shiftDay: 日を1日ずつ、月・年をまたぐ', () => {
   assert.equal(shiftDay('2026-10-31', 1), '2026-11-01');
   assert.equal(shiftDay('2026-01-01', -1), '2025-12-31');
   assert.equal(shiftDay('2024-02-28', 1), '2024-02-29');
+});
+
+test('名所の写真データ：id の数字 % 16 の分け方で、全部の写真が正しい分にあり、サムネイルは Commons のパス', () => {
+  assert.equal(shardOf('Q257473'), 257473 % 16);
+  let n = 0;
+  for (let k = 0; k < SHARDS; k++) {
+    const shard = JSON.parse(readFileSync(new URL(`../data/photos/${k}.json`, import.meta.url), 'utf8'));
+    for (const [id, e] of Object.entries(shard)) {
+      assert.equal(shardOf(id), k);
+      assert.equal(e.length, 4);
+      if (e[0]) { n++; assert.ok(e[0].startsWith('thumb/') || /^[0-9a-f]\/[0-9a-f]{2}\//.test(e[0]), id); assert.ok(e[2], id); }
+    }
+  }
+  assert.ok(n > 5000);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

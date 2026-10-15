@@ -306,6 +306,7 @@ function showSheet(redo, nodes, after) {
   if (after) after();
 }
 function closeSheet() {
+  closePopup();
   sheet.redo = null;
   sheetEl.hidden = true;
   sheetEl.classList.remove('small');
@@ -342,7 +343,8 @@ settingsEl.addEventListener('click', () => { closeCard(); openSettings(); });
 function render() {
   drawMap();
   drawQuest();
-  if (!sheetEl.hidden && sheet.redo) sheet.redo();
+  // シートを開いているときは描き直す。スクロール位置はそのまま（先頭に飛ばない）
+  if (!sheetEl.hidden && sheet.redo) { const top = sheetBody.scrollTop; sheet.redo(); sheetBody.scrollTop = top; }
 }
 
 // ---------- 判子の状態 ----------
@@ -642,9 +644,57 @@ function pixelGroups(spots, z) {
   return [...cells.values()].map((c) => ({ n: c.n, lat: c.lat / c.n, lng: c.lng / c.n }));
 }
 
+// 名所の写真と説明（data/photos/<0〜15>.json：id の数字 % 16 の分だけ読む）。出典は Wikimedia Commons（作者・ライセンスつき）と Wikidata（説明文・CC0）
+const COMMONS_THUMB = 'https://upload.wikimedia.org/wikipedia/commons/';
+const photoShards = new Map();
+async function spotInfoOf(id) {
+  if (!/^Q[0-9]+$/.test(id || '')) return null;
+  const n = Number(id.slice(1)) % 16;
+  if (!photoShards.has(n)) photoShards.set(n, fetchJson(`data/photos/${n}.json`, {}));
+  const e = (await photoShards.get(n))[id];
+  return e ? { thumb: e[0] ? COMMONS_THUMB + e[0] : '', author: e[1] || '', license: e[2] || '', desc: e[3] || '' } : null;
+}
+// サムネイルのパスから Commons のファイル名（'thumb/a/ab/名前.jpg/640px-名前.jpg' か 'a/ab/名前.jpg'）
+const commonsFileOf = (thumbUrl) => { const p = thumbUrl.slice(COMMONS_THUMB.length).split('/'); try { return decodeURIComponent(p[0] === 'thumb' ? p[3] : p[2]); } catch { return ''; } };
+// 写真・作者・ライセンスと説明。データに無い場所・読めない場所は何も出さない（あとから埋める）
+function spotInfoEl(spot) {
+  const box = h('div', { class: 'spotinfo' });
+  spotInfoOf(spot && spot.id).then((info) => {
+    if (!info) return;
+    if (info.thumb) {
+      const file = commonsFileOf(info.thumb);
+      const img = h('img', { src: info.thumb, alt: spot.name, loading: 'lazy', width: 640, onerror: () => fig.remove() });
+      const fig = h('figure', { class: 'spotphoto' }, img,
+        h('figcaption', {}, '写真：', info.author || '作者不明', info.license ? `（${info.license}）` : '', '　',
+          file ? h('a', { href: 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(file.replace(/ /g, '_')), target: '_blank', rel: 'noopener' }, 'Wikimedia Commons') : 'Wikimedia Commons'));
+      box.append(fig);
+    }
+    if (info.desc) box.append(h('p', { class: 'muted', style: 'margin:4px 0' }, info.desc));
+  });
+  return box;
+}
+// 自分の記録：その場所で撮った自分の写真（印に付いたもの）を横に並べる。無ければ null
+function myPhotosEl(spotId) {
+  const seals = state.seals.filter((s) => s.spotId === spotId && s.photoId).sort((a, b) => (a.at < b.at ? 1 : -1));
+  if (!seals.length) return null;
+  return h('div', { class: 'myphotos' }, seals.map((s) => imgFor(s.photoId, 'myph')));
+}
+// 地図のその場所へ移って、カードを開く。区画をまだ読んでいない遠い場所は、読んでから。場所のデータが無くても位置があればそこへ寄る
+async function showOnMap(spotId, lat, lng) {
+  const s0 = spotById(spotId);
+  const la = s0 && Number.isFinite(s0.lat) ? s0.lat : lat;
+  const ln = s0 && Number.isFinite(s0.lng) ? s0.lng : lng;
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+  closePopup(); closeSheet(); closeCard(); masuDetail = null;
+  await ensureTiles(tilesForBounds(la - 0.01, ln - 0.01, la + 0.01, ln + 0.01));
+  const s = spotById(spotId);
+  if (s && Number.isFinite(s.lat)) focusSpot(s);
+  else if (mainMap) { setFollow(false); mainMap.setView([la, ln], Math.max(mainMap.getZoom(), 15), { animate: !reduceMotion() }); }
+  return true;
+}
 // 判子を押した日のボタン（押すと日記のその日へ）。押していなければ null
 function openDiaryOn(date) {
-  closeCard(); masuDetail = null; diaryPick = null;
+  closePopup(); closeCard(); masuDetail = null; diaryPick = null;
   diaryYM = { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)) }; diaryDay = date; openDiary();
 }
 // 2回以上押した場所だけ、日付の一覧を出す（1回なら「日記」ボタンだけ）
@@ -677,10 +727,12 @@ function showCard(spot) {
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
       spot.pref ? ` ${spot.pref}` : '', dist !== null ? `　${fmtDist(dist)}` : ''),
     spot.note ? h('p', { style: 'margin:4px 0' }, spot.note) : null,
+    spotInfoEl(spot),
     bestMonthsOf(spot) ? h('p', { class: 'muted', style: 'margin:4px 0' }, `ベストシーズン ${formatBestMonths(bestMonthsOf(spot))}`) : null,
     season ? h('p', { class: 'muted', style: 'margin:4px 0' }, `いまは見頃（${season.label}）。ここで押すと季節の判子です。`) : null,
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     stampDatesEl(spot.id),
+    myPhotosEl(spot.id),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す'),
       diaryBtn(spot.id)),
@@ -1208,29 +1260,49 @@ const PREF_ORDER = ['北海道', '青森県', '岩手県', '宮城県', '秋田�
 
 // マスを押すと、名前・都道府県と（位置が分かれば）「地図で見る」を出す
 let masuDetail = null;
+// 帳面のマスを押したときの詳細：帳面（と、そのスクロール位置）はそのままに、下からせり上がるポップアップで出す。
+// 閉じる：「閉じる」・外側をタップ・下へなでる。中身は地図のカードと同じ（名所の写真・説明・自分の写真・押した日→日記・地図で見る・経路）
+let popupEl = null;
+function closePopup() {
+  if (!popupEl) return;
+  popupEl.remove(); popupEl = null;
+}
 function openMasuDetail(id, name, pref) {
-  masuDetail = { name, pref, full: spotById(id) };
-  openBook();
-}
-function masuDetailPanel() {
-  if (!masuDetail) return null;
-  const spot = masuDetail.full;
+  closePopup();
+  const spot = spotById(id);
   const hasCoord = spot && Number.isFinite(spot.lat);
-  return h('div', { class: 'masudetail' },
-    h('div', {}, h('b', {}, masuDetail.name), masuDetail.pref ? h('span', { class: 'muted' }, '　' + masuDetail.pref) : null),
+  const grab = h('div', { class: 'popgrab', 'aria-label': '下へなでると閉じる' }, h('span', {}));
+  const body = h('div', { class: 'popbody' },
+    h('div', {}, h('b', { style: 'font-size:18px' }, name), pref ? h('span', { class: 'muted' }, '　' + pref) : null),
+    spotInfoEl({ id, name }),
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
-    stampDatesEl(masuDetail.id),
-    h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
-      hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: async () => {
-        masuDetail = null; closeSheet();
-        // 遠くの場所は区画をまだ読んでいないので、読んでから区画の中の（半径や種類のそろった）場所を開く
-        await ensureTiles(tilesForBounds(spot.lat - 0.01, spot.lng - 0.01, spot.lat + 0.01, spot.lng + 0.01));
-        const full = spotById(spot.id);
-        focusSpot(full && Number.isFinite(full.lat) ? full : spot);
-      } }, '地図で見る') : null,
-      diaryBtn(masuDetail.id),
-      h('button', { class: 'btn', type: 'button', onclick: () => { masuDetail = null; openBook(); } }, '閉じる')));
+    stampDatesEl(id),
+    myPhotosEl(id),
+    h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px' },
+      hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: () => showOnMap(id, spot.lat, spot.lng) }, '地図で見る') : null,
+      hasCoord ? h('a', { class: 'btn', href: gmapUrl(spot, true), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, '経路') : null,
+      diaryBtn(id),
+      h('button', { class: 'btn', type: 'button', onclick: closePopup }, '閉じる')));
+  const pop = h('div', { class: 'popup', role: 'dialog', 'aria-label': name }, grab, body);
+  const back = h('div', { class: 'popback', onclick: closePopup });
+  // 下へなでると閉じる（つまみのところから。ポップアップが一番上までスクロールしているときは中身のどこからでも）
+  let y0 = null;
+  const start = (e) => { if (e.target.closest('.popgrab') || body.scrollTop <= 0) y0 = e.touches[0].clientY; };
+  const move = (e) => { if (y0 === null) return; const dy = e.touches[0].clientY - y0; if (dy > 0) pop.style.transform = 'translateY(' + dy + 'px)'; };
+  const end = (e) => {
+    if (y0 === null) return;
+    const dy = e.changedTouches[0].clientY - y0; y0 = null;
+    if (dy > 80) closePopup(); else pop.style.transform = '';
+  };
+  pop.addEventListener('touchstart', start, { passive: true });
+  pop.addEventListener('touchmove', move, { passive: true });
+  pop.addEventListener('touchend', end, { passive: true });
+  const wrap = h('div', { class: 'popwrap' }, back, pop);
+  popupEl = wrap;
+  document.body.append(wrap);
 }
+// （前の版の、帳面の一番上に出す詳細。いまは使わない）
+function masuDetailPanel() { return null; }
 function barEl(count, total, color) {
   const pct = total ? Math.min(100, Math.round((count / total) * 100)) : 0;
   return h('div', { class: 'bar' }, h('i', { style: `width:${pct}%;background:${color}` }));
@@ -1333,8 +1405,15 @@ function bookSpots() {
 function sealRow(s, withDelete) {
   const spot = s.spotId ? spotById(s.spotId) : null;
   const where = [spot ? spot.name : '', s.pref].filter(Boolean).join('・');
+  const canGo = (spot && Number.isFinite(spot.lat)) || (Number.isFinite(s.lat) && Number.isFinite(s.lng));
+  const photo = s.photoId ? imgFor(s.photoId, 'ph') : null;
+  // 写真を押す：位置があれば地図のその場所へ。位置がなければ写真を大きく（もう一度押すと戻る）
+  if (photo && withDelete) {
+    photo.style.cursor = 'pointer';
+    photo.onclick = () => { if (canGo) showOnMap(s.spotId, s.lat, s.lng); else photo.classList.toggle('big'); };
+  }
   return h('div', { class: 'rec' + (s.photoId ? '' : ' nophoto') },
-    s.photoId ? imgFor(s.photoId, 'ph') : null,
+    photo,
     h('div', {},
       h('div', { class: 't' }, `${s.type}　${fmtDate(s.at)}`),
       where ? h('div', { class: 'n' }, where) : null,
@@ -1785,10 +1864,14 @@ function diaryDayNodes(date) {
       distText(dist.days[d.date]) ? h('p', { class: 'muted', style: 'margin:0 0 6px' }, `移動：${distText(dist.days[d.date])}`) : null,
       d.visits.map((v) => {
         const s = spotById(v.spotId);
-        return h('div', { class: 'stampline' },
+        const canGo = (s && Number.isFinite(s.lat)) || (Number.isFinite(v.lat) && Number.isFinite(v.lng));
+        const row = h('div', { class: 'stampline' + (canGo ? ' go' : '') },
           h('span', { class: 'mini' + (v.seasonal ? ' season' : '') }, glyphOf(s ? s.name : '?')),
           h('span', {}, `${s ? s.name : v.spotId}${v.seasonal ? '　季節の判子' : ''}`),
-          h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || ''));
+          h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || '', canGo ? ' ›' : ''));
+        // 押すと、地図のその場所へ移ってカードを開く（位置のない判子は押せない）
+        if (canGo) { row.setAttribute('role', 'button'); row.tabIndex = 0; row.onclick = () => showOnMap(v.spotId, v.lat, v.lng); }
+        return row;
       }),
       d.meals.map((m) => h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto'), style: 'margin-top:6px' },
         m.photoId ? imgFor(m.photoId, 'ph') : null,
