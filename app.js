@@ -28,7 +28,7 @@ const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); co
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
 const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate'); const settingsEl = $('settings');
 
-const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], shopSpots: [], foodShops: {}, foods: [], worldFoods: [], tab: 'spots', fixes: [], climate: null };
+const state = { origNames: new Map(), visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], shopSpots: [], foodShops: {}, foods: [], worldFoods: [], tab: 'spots', fixes: [], climate: null };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 動作確認用：?date=2026-11-12 で今日の日付を差し替える
@@ -156,12 +156,13 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods, climate, foodPhotos, foodShops, worldFoods, festivals] = await Promise.all([
+  const [lists, coords, meta, foods, climate, foodPhotos, foodShops, worldFoods, festivals, origNames] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
     fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}), fetchJson('data/food-shops.json', {}), fetchJson('data/world-foods.json', []),
-    fetchJson('data/festivals.json', { items: [] }),
+    fetchJson('data/festivals.json', { items: [] }), fetchJson('data/names-en.json', {}),
   ]);
   state.foods = foods;
+  state.origNames = new Map(Object.entries(origNames || {}));
   state.foodPhotos = foodPhotos;
   buildShopSpots(foodShops);
   // 日本以外のご当地（Wikidata：data/world-foods.json）。日本のご当地と同じ形（key・name・summary）に country を足したもの。記録も同じ meals に付く
@@ -706,6 +707,12 @@ async function spotInfoOf(id) {
 // サムネイルのパスから Commons のファイル名（'thumb/a/ab/名前.jpg/640px-名前.jpg' か 'a/ab/名前.jpg'）
 const commonsFileOf = (thumbUrl) => { const p = thumbUrl.slice(COMMONS_THUMB.length).split('/'); try { return decodeURIComponent(p[0] === 'thumb' ? p[3] : p[2]); } catch { return ''; } };
 // 写真・作者・ライセンスと説明。データに無い場所・読めない場所は何も出さない（あとから埋める）
+// 日本語に訳した名前の、元の名前（英語など）。訳していなければ空
+function origNameOf(id) { return (state.origNames && (state.origNames.get(id) || state.origNames.get(String(id).replace(/^f_/, '')))) || ''; }
+function origNameEl(id, name) {
+  const o = origNameOf(id);
+  return o && o !== name ? h('div', { class: 'muted', style: 'font-size:12px;margin:0 0 2px;word-break:break-word' }, o) : null;
+}
 function spotInfoEl(spot) {
   const box = h('div', { class: 'spotinfo' });
   spotInfoOf(spot && spot.id).then((info) => {
@@ -719,7 +726,8 @@ function spotInfoEl(spot) {
       const fig = h('figure', { class: 'spotphoto' }, img, h('figcaption', {}, ...credit()));
       box.append(fig);
     }
-    if (info.desc) box.append(h('p', { class: 'muted', style: 'margin:4px 0' }, info.desc));
+    // 説明文は日本語のものだけ出す（英語のまま残ったものは出さない。build-names-ja.mjs で訳している）
+    if (info.desc && /[ぁ-んァ-ン一-龥]/.test(info.desc)) box.append(h('p', { class: 'muted', style: 'margin:4px 0' }, info.desc));
   });
   return box;
 }
@@ -874,6 +882,7 @@ function showCard(spot) {
   card = h('div', { class: 'spotcard' },
     h('button', { class: 'cardx', type: 'button', 'aria-label': '閉じる', onclick: closeCard }, '×'),
     h('h3', {}, spot.name),
+    origNameEl(spot.id, spot.name),
     h('p', { class: 'sub', style: 'margin:2px 0 6px' },
       spotTags(spot).map((t) => h('span', { class: 'tag t-' + spot.tier }, t)),
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
@@ -1433,6 +1442,7 @@ function openMasuDetail(id, name, pref) {
   const grab = h('div', { class: 'popgrab', 'aria-label': '下へなでると閉じる' }, h('span', {}));
   const body = h('div', { class: 'popbody' },
     h('div', {}, h('b', { style: 'font-size:18px' }, name), pref ? h('span', { class: 'muted' }, '　' + pref) : null),
+    origNameEl(id, name),
     spotInfoEl({ id, name }),
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
     stampDatesEl(id),
@@ -1536,6 +1546,8 @@ function ensureKana() {
   kanaLoading = true;
   fetchJson('data/kana.json', {}).then((k) => {
     kanaMap = new Map(Object.entries(k).map(([id, w]) => [id, normalizeName(w)]));
+    // 日本語に訳した名前の元の名前（英語など）でも探せるように、読みに足す
+    for (const [id, o] of state.origNames) for (const key of [id, `f_${id}`]) kanaMap.set(key, (kanaMap.get(key) || '') + normalizeName(o));
     if (spotQuery && state.tab === 'spots' && !sheetEl.hidden && refreshSearch) refreshSearch();
   });
 }
@@ -1894,7 +1906,7 @@ function bookCountries() {
   const visited = countries.filter((c) => counts[c]);
   const sectionsFor = (q) => countries.map((country) => {
     const p = countryProgress(state.visits, spots, country);
-    const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || normalizeName(country).includes(q)) : p.cells;
+    const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || normalizeName(origNameOf(c.id)).includes(q) || normalizeName(country).includes(q)) : p.cells;
     if (!p.total) {
       // 世界遺産などは無く、ご当地だけがある国
       const foods = worldFoodsOf(country).filter((f) => !q || normalizeName(f.name).includes(q) || normalizeName(country).includes(q));

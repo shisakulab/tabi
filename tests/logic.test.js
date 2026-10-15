@@ -9,6 +9,7 @@ import {
 import { dataURLToBlob } from '../db.js';
 import { readFileSync } from 'node:fs';
 import { CLOSED_SPOTS, dropClosed } from '../tools/build-spots.mjs';
+import { hasJa, jaName, jaDesc } from '../tools/names-ja.mjs';
 import { shardOf, SHARDS } from '../tools/build-photos.mjs';
 import seasons from '../themes/seasons.js';
 
@@ -775,4 +776,27 @@ test('data/festivals.json: ユネスコ山・鉾・屋台行事は33件そろい
   assert.ok(yama.every((r) => r[4].length >= 1 && r[5] === '日本' && r[6]));
   assert.equal(items.filter((r) => r[7].includes('sandai')).length, 3);
   assert.ok(items.filter((r) => r[5] === '日本').length > 500);
+});
+
+test('names-ja: 英語の名前は訳があれば日本語に、すでに日本語・元の名前が違うときは変えない', () => {
+  const tb = { names: { Q1: ['聖母マリアの家', 'ai', 'House of the Virgin Mary'] }, desc: { church: '教会' }, wd: [] };
+  assert.deepEqual(jaName(tb, 'Q1', 'House of the Virgin Mary'), { name: '聖母マリアの家', orig: 'House of the Virgin Mary' });
+  assert.deepEqual(jaName(tb, 'Q1', '聖母マリアの家'), { name: '聖母マリアの家', orig: '' });
+  assert.deepEqual(jaName(tb, 'Q1', 'Another name'), { name: 'Another name', orig: '' });
+  assert.deepEqual(jaName(tb, 'Q2', 'No table'), { name: 'No table', orig: '' });
+  assert.equal(jaDesc(tb, 'church'), '教会'); assert.equal(jaDesc(tb, 'castle'), 'castle'); assert.equal(jaDesc(tb, '日本の城'), '日本の城');
+  assert.ok(hasJa('パリ') && hasJa('廬山') && !hasJa('Paris') && !hasJa(''));
+});
+
+test('data: 世界遺産の名前はほぼ日本語、元の名前は names-en.json に、説明文は日本語', () => {
+  const read = (f) => JSON.parse(readFileSync(new URL('../data/' + f, import.meta.url), 'utf8'));
+  const her = read('lists.json').lists.find((l) => l.key === 'heritage').items;
+  const noJa = her.filter((i) => !hasJa(i[1]));
+  assert.ok(noJa.length / her.length < 0.03, '日本語でない名前 ' + noJa.length);
+  const orig = read('names-en.json');
+  assert.ok(Object.keys(orig).length > 3000);
+  for (const [id, o] of Object.entries(orig)) { assert.equal(typeof o, 'string'); assert.ok(o, id); }
+  let desc = 0; let en = 0;
+  for (let k = 0; k < 16; k++) for (const v of Object.values(read(`photos/${k}.json`))) if (v[3]) { desc++; if (!hasJa(v[3])) en++; }
+  assert.ok(desc > 9000 && en / desc < 0.02, '英語の説明 ' + en);
 });

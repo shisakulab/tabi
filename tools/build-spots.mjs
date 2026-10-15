@@ -7,6 +7,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { tileKey, distanceMeters } from '../logic.js';
+import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
+const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = path.join(root, 'tools', '.cache');
@@ -317,7 +319,8 @@ async function fetchGlobalList(list) {
     if (!name) continue; // 名前がまったく取れないものは載せない（世界遺産で9件ほど）
     const cQid = countryOf.get(it.id);
     const cLab = cQid ? (countryLabels.get(cQid) || {}) : {};
-    result.push({ id: it.id, name, lat: it.lat, lng: it.lng, pref: '', country: cLab.ja || cLab.en || '' });
+    // 日本語のラベルが無い名前は、tools/names-ja.json（日本語版 Wikipedia の題・別名・翻訳）で日本語にする。元の名前は data/names-en.json（tools/build-names-ja.mjs）
+    result.push({ id: it.id, name: jaName(NAMES_JA, it.id, name).name, lat: it.lat, lng: it.lng, pref: '', country: cLab.ja || cLab.en || '' });
   }
   result.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
   const jpIds = result.filter((it) => it.country === '日本').map((it) => it.id);

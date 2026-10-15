@@ -11,6 +11,8 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
+const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = path.join(root, 'tools', '.cache', 'photos');
@@ -117,7 +119,7 @@ async function main() {
       else { entry = [ii.thumburl.slice(PREFIX.length), plain((em.Artist || {}).value).slice(0, 80), license]; n++; }
     }
     const dd = desc[id] || {};
-    const text = (dd.ja || dd.en || '').trim().slice(0, 80);
+    const text = jaDesc(NAMES_JA, (dd.ja || dd.en || '').trim().slice(0, 80)); // 英語の説明は tools/names-ja.json の訳に置き換える
     if (text) nd++;
     if (!entry[0] && !text) continue;
     shards[shardOf(id)][id] = [...entry, text];

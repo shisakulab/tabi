@@ -11,6 +11,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
+const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = path.join(root, 'tools', '.cache', 'world-foods');
@@ -140,6 +142,10 @@ async function main() {
     }
     const row = { key: `w_${p.item}`, name: e.ja || e.en, country: p.country, desc: (e.dja || e.den || '').slice(0, 80) };
     if (!e.ja && e.en) row.en = true; // 日本語のラベルが無く英語
+    // 日本語に訳した名前・説明（tools/names-ja.json。作り方は tools/build-names-ja.mjs）。元の名前は en に文字列で残す
+    const jn = jaName(NAMES_JA, p.item, row.name);
+    if (jn.orig) { row.name = jn.name; row.en = jn.orig; }
+    row.desc = jaDesc(NAMES_JA, row.desc);
     if (photo) row.photo = photo;
     out.push(row);
   }

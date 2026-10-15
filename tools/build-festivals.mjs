@@ -11,6 +11,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { UNESCO, SANDAI, DROP } from './festival-extra.mjs';
+import { loadNamesJa, jaName } from './names-ja.mjs';
+const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CACHE = path.join(root, 'tools', '.cache');
@@ -150,13 +152,14 @@ async function main() {
   for (const it of items.values()) {
     if (it.country !== '日本' && /古代|帝国$/.test(it.country)) continue; // 歴史上の国の祭り（古代ローマなど）は外す
     if (it.lat === null) continue;
-    const name = it.ja || it.en;
+    const jn = jaName(NAMES_JA, it.id, it.ja || it.en); // 日本語名が無いものは tools/names-ja.json の訳（tools/build-names-ja.mjs）
+    const name = jn.name;
     if (!name) continue;
     if (!Number.isFinite(it.lat) || !Number.isFinite(it.lng)) continue;
     // 開催月が4つを超えるものは「いつの祭りか」が定まらないので月なしにする
     const months = it.months.size && it.months.size <= 4 ? [...it.months].sort((a, b) => a - b) : [];
     rankCount[it.src]++;
-    out.push([it.id, name, Math.round(it.lat * 1e5) / 1e5, Math.round(it.lng * 1e5) / 1e5, months, it.country, it.pref, [...it.flags], it.ja ? '' : it.en]);
+    out.push([it.id, name, Math.round(it.lat * 1e5) / 1e5, Math.round(it.lng * 1e5) / 1e5, months, it.country, it.pref, [...it.flags], jn.orig || (it.ja ? '' : it.en)]);
   }
   out.sort((a, b) => (a[7].length === b[7].length ? a[0].localeCompare(b[0], 'en', { numeric: true }) : b[7].length - a[7].length));
   await writeFile(path.join(root, 'data', 'festivals.json'), JSON.stringify({
