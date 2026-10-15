@@ -838,7 +838,7 @@ export const WAFU_MONTHS = ['睦月', '如月', '弥生', '卯月', '皐月', '�
 export const wafuMonth = (month) => WAFU_MONTHS[month - 1] || `${month}月`;
 
 // 地図の点に出す、場所の種類のマーク。神社＝shrine（鳥居）・お寺＝temple（卍）・飲食＝food（ナイフとフォーク）・ほか
-const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view' };
+const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', foodshop: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view' };
 export function markKindOf(spot) {
   if (!spot) return 'pin';
   if (KIND_MARK[spot.kind]) return KIND_MARK[spot.kind];

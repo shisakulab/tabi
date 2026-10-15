@@ -692,3 +692,37 @@ test('readExifGPS / readExifDate: HEIC（JPEG でない）でも EXIF を探し�
   assert.equal(readExifDate(toHeic(makeJpeg(false))), '2024-05-06');
   assert.equal(readExifGPS(new Uint8Array([0, 0, 0, 8, 1, 2, 3, 4]).buffer), null);
 });
+
+// ---------- ご当地グルメのお店（data/food-shops.json） ----------
+test('food-shops.json: 料理キーは foods.json の main の料理、店は id・名前・日本の中の座標を持ち、数百KB以内', () => {
+  const raw = readFileSync(new URL('../data/food-shops.json', import.meta.url), 'utf8');
+  const shops = JSON.parse(raw);
+  const foods = JSON.parse(readFileSync(new URL('../data/foods.json', import.meta.url), 'utf8'));
+  const mains = new Set(foods.filter((f) => f.main).map((f) => f.key));
+  assert.ok(raw.length < 500 * 1024, 'サイズ');
+  assert.ok(Object.keys(shops).length >= 30, '拾えた料理の数');
+  for (const [key, list] of Object.entries(shops)) {
+    assert.ok(mains.has(key), key);
+    assert.ok(list.length > 0);
+    const ids = new Set();
+    for (const r of list) {
+      assert.match(r.id, /^[nw]\d+$/);
+      assert.ok(r.name && typeof r.name === 'string');
+      assert.ok(r.lat > 20 && r.lat < 46 && r.lng > 122 && r.lng < 154, `${key} ${r.name}`);
+      assert.ok(!ids.has(r.id), '同じ料理で同じ店が重なっている');
+      ids.add(r.id);
+    }
+  }
+  // 検索語の表の料理キーも foods.json にある
+  const terms = JSON.parse(readFileSync(new URL('../tools/food-shop-terms.json', import.meta.url), 'utf8'));
+  for (const k of Object.keys(terms).filter((x) => !x.startsWith('_'))) assert.ok(mains.has(k), k);
+});
+
+test('お店の場所（kind: foodshop）：飲食のマークで、範囲に3分いたら自動の判子、2分では押さない', () => {
+  const shop = { id: 'fs_n1', kind: 'foodshop', name: 'ほうとう店', lat: 35.66, lng: 138.57, tier: 'list', radius: 50, lists: ['foodshop'], foodKeys: ['houtou_yama_nashi'] };
+  assert.equal(markKindOf(shop), 'food');
+  const at0 = Date.parse('2026-10-15T12:00:00+09:00');
+  const fixes = (min) => [0, 1, 2, 3].map((i) => ({ lat: 35.66, lng: 138.57, acc: 10, at: at0 + (min * 60000 * i) / 3, speed: 0 }));
+  assert.equal(shouldAutoStamp(shop, fixes(3), 'walk', [], new Date(at0 + 200000)), true);
+  assert.equal(shouldAutoStamp(shop, fixes(2), 'walk', [], new Date(at0 + 200000)), false);
+});

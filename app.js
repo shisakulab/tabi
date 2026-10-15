@@ -20,6 +20,7 @@ const ROAD_COLOR = '#9a6b2f'; // 道の駅
 const MODE_VERB = { walk: '歩いて', bike: '自転車で', trip: '旅行で', train: '電車で', car: '車で', plane: '飛行機で' };
 const SEAL_TYPES = [MEMO_TYPE, '御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
+const MIN_ZOOM_SHOP = 14; // ご当地グルメのお店を出す寄り具合
 const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない。都心は数が多く、引くと地図が埋まる
 
 const $ = (id) => document.getElementById(id);
@@ -27,7 +28,7 @@ const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); co
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
 const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate'); const settingsEl = $('settings');
 
-const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], foods: [], tab: 'spots', fixes: [], climate: null };
+const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], shopSpots: [], foodShops: {}, foods: [], tab: 'spots', fixes: [], climate: null };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 動作確認用：?date=2026-11-12 で今日の日付を差し替える
@@ -155,12 +156,13 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods, climate, foodPhotos] = await Promise.all([
+  const [lists, coords, meta, foods, climate, foodPhotos, foodShops] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
-    fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}),
+    fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}), fetchJson('data/food-shops.json', {}),
   ]);
   state.foods = foods;
   state.foodPhotos = foodPhotos;
+  buildShopSpots(foodShops);
   state.climate = climate;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
@@ -193,6 +195,37 @@ async function loadCatalog() {
   }
 }
 
+// ご当地グルメのお店（data/food-shops.json：料理キー → [{id, name, lat, lng}]、出典 OSM）。同じお店は1つの場所にまとめ、何の料理かを foodKeys に持つ
+function buildShopSpots(foodShops) {
+  const byId = new Map();
+  state.foodShops = {};
+  for (const [key, list] of Object.entries(foodShops || {})) {
+    state.foodShops[key] = [];
+    for (const r of list) {
+      let s = byId.get(r.id);
+      if (!s) { s = { id: `fs_${r.id}`, kind: 'foodshop', name: r.name, pref: '', country: '日本', lat: r.lat, lng: r.lng, tier: 'list', radius: 50, lists: ['foodshop'], foodKeys: [] }; byId.set(r.id, s); }
+      if (!s.foodKeys.includes(key)) s.foodKeys.push(key);
+      state.foodShops[key].push(s);
+    }
+  }
+  state.shopSpots = [...byId.values()];
+}
+const foodNamesOf = (spot) => (spot.foodKeys || []).map((k) => (state.foods.find((f) => f.key === k) || {}).name).filter(Boolean).join('・');
+// お店の判子を押したら、そのお店の料理の「食べた」記録も付ける（同じ日・同じお店・同じ料理はもう付けない）。付けた料理の数を返す
+async function addShopMeals(spot, visit, extra = {}) {
+  let n = 0;
+  for (const key of spot.foodKeys || []) {
+    const food = state.foods.find((f) => f.key === key);
+    const day = todayStr(new Date(visit.at));
+    if (!food || state.meals.some((m) => m.itemKey === key && m.at === day && m.spotId === spot.id)) continue;
+    const meal = { id: db.newId(), kind: 'food', name: food.name, itemKey: key, at: day, pref: food.pref, note: `${spot.name}で`, photoId: null, spotId: spot.id, visitId: visit.id, ...extra };
+    await db.put('meals', meal);
+    state.meals.push(meal);
+    n++;
+  }
+  return n;
+}
+
 // 区画ファイル data/spots/<key>.json
 const tiles = new Map();
 const tilePending = new Map();
@@ -211,10 +244,11 @@ function loadTile(key) {
 }
 const ensureTiles = (keys) => Promise.all(keys.filter((k) => !tiles.has(k)).map(loadTile));
 const spotsIn = (keys) => keys.flatMap((k) => tiles.get(k) || []);
-const allLoaded = () => [...[...tiles.values()].flat(), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+const shopsNear = (p, m = 0.02) => state.shopSpots.filter((s) => Math.abs(s.lat - p.lat) < m && Math.abs(s.lng - p.lng) < m * 1.3);
+const allLoaded = () => [...[...tiles.values()].flat(), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat)), ...state.shopSpots];
 function spotById(id) {
   for (const list of tiles.values()) { const s = list.find((x) => x.id === id); if (s) return s; }
-  return state.seasonSpots.find((s) => s.id === id) || state.catalog.get(id) || null;
+  return state.seasonSpots.find((s) => s.id === id) || (id.startsWith('fs_') ? state.shopSpots.find((s) => s.id === id) : null) || state.catalog.get(id) || null;
 }
 
 // ---------- 地図の共通部品 ----------
@@ -402,6 +436,7 @@ function markPassed(pos, cands) {
 // 季節＝赤、名所＝紺、近所＝緑、道の駅＝茶。empty（まだ押していない）判定は呼び出し側で別に OFF_COLOR を使う
 function stampColor(spot, isSeason) {
   const road = !isSeason && (spot.lists || []).length > 0 && spot.lists.every((l) => l === 'michinoeki');
+  if (spot.kind === 'foodshop') return FOOD_COLOR;
   return isSeason ? SEAL_COLOR : road ? ROAD_COLOR : TIER_COLOR[spot.tier] || TIER_COLOR.list;
 }
 // その場所に付いた写真のうち一番新しいもの（写真の取り込み・記録でセットした印の photoId）。なければ null
@@ -503,10 +538,12 @@ async function drawMap() {
   const z = mainMap.getZoom();
   const nearOk = modeAllows({ tier: 'near' }, state.mode);
   const seasons = state.seasonSpots.filter((s) => Number.isFinite(s.lat) && b.contains([s.lat, s.lng]) && modeAllows(s, state.mode));
+  // ご当地グルメのお店（ナイフとフォークのマーク）。寄ったとき（MIN_ZOOM_SHOP 以上）だけ、見えている範囲のものを出す
+  const shops = z >= MIN_ZOOM_SHOP ? state.shopSpots.filter((s) => b.contains([s.lat, s.lng])).slice(0, 150) : [];
   let list; let groups;
   if (z < MIN_ZOOM_ALL) {
     // 大きく引いたとき：区画は読まず、meta の件数をまとめて丸で出す。季節の名所だけは1つずつ
-    list = seasons;
+    list = [...seasons, ...shops];
     groups = tileGroups(b, z, nearOk);
   } else {
     const keys = tilesForBounds(b.getSouth(), b.getWest(), b.getNorth(), b.getEast());
@@ -520,7 +557,7 @@ async function drawMap() {
     const p = passed(); const pp = passedPos(); let filled = false;
     for (const s of inView) if (p[s.id] && !pp[s.id]) { pp[s.id] = [s.lat, s.lng]; filled = true; }
     if (filled) savePassed();
-    list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR || mineNear(s)), ...seasons].slice(0, 400);
+    list = [...inView.filter((s) => s.tier !== 'near' || z >= MIN_ZOOM_NEAR || mineNear(s)), ...seasons, ...shops].slice(0, 550);
     groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near' && !mineNear(s)), z);
   }
   if (seq !== drawSeq) return;
@@ -727,6 +764,7 @@ function showCard(spot) {
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
       spot.pref ? ` ${spot.pref}` : '', dist !== null ? `　${fmtDist(dist)}` : ''),
     spot.note ? h('p', { style: 'margin:4px 0' }, spot.note) : null,
+    spot.foodKeys ? h('p', { style: 'margin:4px 0' }, `食べられる料理：${foodNamesOf(spot)}。押すと「食べた」記録も付きます。`) : null,
     spotInfoEl(spot),
     bestMonthsOf(spot) ? h('p', { class: 'muted', style: 'margin:4px 0' }, `ベストシーズン ${formatBestMonths(bestMonthsOf(spot))}`) : null,
     season ? h('p', { class: 'muted', style: 'margin:4px 0' }, `いまは見頃（${season.label}）。ここで押すと季節の判子です。`) : null,
@@ -755,6 +793,7 @@ function gmapUrl(spot, route) {
 // 場所の札：OSM の場所は種類（神社・銭湯・灯台など）、一覧の場所は入っている一覧の名前（季節の名所は別の札で出すので除く）
 function spotTags(spot) {
   if (NEAR_KINDS[spot.kind]) return [NEAR_KINDS[spot.kind]];
+  if (spot.kind === 'foodshop') return ['ご当地のお店'];
   return (spot.lists || []).filter((k) => k !== 'seasons').map((k) => (state.lists.find((l) => l.key === k) || {}).name).filter(Boolean);
 }
 
@@ -833,6 +872,7 @@ async function stamp(spot) {
     const season = seasonOf(spot, now());
     const visit = { id: db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'tap' };
     await db.put('visits', visit);
+    const shopN = await addShopMeals(spot, visit);
     const wasQuest = currentQuests().some((q) => q.id === spot.id);
     await loadData();
     closeCard();
@@ -842,6 +882,7 @@ async function stamp(spot) {
     await celebrate(spot);
     render();
     openStamped(spot, season);
+    if (shopN) toast(`${spot.name}の判子と、${foodNamesOf(spot)}の記録を付けました`);
     updateNear();
   } catch (err) {
     toast('保存できませんでした：' + (err && err.message ? err.message : err));
@@ -914,7 +955,7 @@ function currentQuests() {
   const kept = keepItems.filter((it) => byId.has(it.id)).map((it) => ({ ...byId.get(it.id), distance: distanceMeters(state.pos, it), daily: true }));
   const skip = new Set([...used, ...keepItems.map((it) => it.id)]);
   const need = want - keepItems.length;
-  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id)), d, state.mode, state.pos, today, before, need, loopMinutes()) : [];
+  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id) && s.kind !== 'foodshop'), d, state.mode, state.pos, today, before, need, loopMinutes()) : [];
   // 回る順（選んだときの順）のまま
   let daily = [...kept, ...add];
   let loop = saved.loop || 0;
@@ -1097,7 +1138,7 @@ async function autoStamp() {
   const keys = tilesForBounds(pos.lat - 0.02, pos.lng - 0.025, pos.lat + 0.02, pos.lng + 0.025);
   await ensureTiles(keys);
   if (stamping) return;
-  const cands = [...spotsIn(keys), ...state.seasonSpots].filter((s) => Number.isFinite(s.lat) && modeAllows(s, state.mode))
+  const cands = [...spotsIn(keys), ...state.seasonSpots, ...shopsNear(pos)].filter((s) => Number.isFinite(s.lat) && modeAllows(s, state.mode))
     .map((s) => ({ s, d: distanceMeters(pos, s) })).sort((a, b) => a.d - b.d);
   markPassed(pos, cands);
   const hit = cands.find(({ s }) => !undone.has(s.id) && shouldAutoStamp(s, state.fixes, state.mode, state.visits, now()));
@@ -1108,10 +1149,11 @@ async function autoStamp() {
     const season = seasonOf(spot, now());
     const visit = { id: db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'auto' };
     await db.put('visits', visit);
+    const shopN = await addShopMeals(spot, visit);
     await loadData();
     drawMap();
     render();
-    const msg = season ? `${spot.name}の季節の判子（${season.label}）を押しました` : `${spot.name}の判子を押しました`;
+    const msg = (season ? `${spot.name}の季節の判子（${season.label}）を押しました` : `${spot.name}の判子を押しました`) + (shopN ? `（${foodNamesOf(spot)}を食べた記録も付けました）` : '');
     autoNote = { spot, visitId: visit.id, msg };
     clearTimeout(autoTimer);
     autoTimer = setTimeout(() => { autoNote = null; nearSig = ''; updateNear(); }, 60000);
@@ -1128,6 +1170,7 @@ async function autoStamp() {
 async function undoAuto(note) {
   try {
     await db.remove('visits', note.visitId);
+    for (const m of state.meals.filter((x) => x.visitId === note.visitId)) await db.remove('meals', m.id);
     undone.add(note.spot.id);
     autoNote = null;
     await loadData();
@@ -1495,6 +1538,27 @@ function foodPhotoEl(food) {
     h('img', { src: 'data/' + p.file, alt: food.name, loading: 'lazy', width: 640 }),
     h('figcaption', {}, '出典：農林水産省「うちの郷土料理」', p.credit ? `　画像提供元：${p.credit}` : ''));
 }
+// その料理を出すお店の一覧（今いる場所に近い順。位置が分からなければ、料理の県のお店から）。押すと地図のそのお店へ
+function foodShopsEl(food) {
+  const shops = state.foodShops[food.key] || [];
+  if (!shops.length) return null;
+  const pos = state.pos;
+  const ordered = shops.map((s) => ({ s, d: pos ? distanceMeters(pos, s) : null }));
+  if (pos) ordered.sort((a, b) => a.d - b.d);
+  const list = h('div', { class: 'list shoplist' });
+  const draw = (all) => {
+    list.replaceChildren(...ordered.slice(0, all ? ordered.length : 12).map(({ s, d }) => h('button', {
+      class: 'btn shoprow', type: 'button', onclick: () => showOnMap(s.id),
+    }, h('span', {}, s.name, visitsOf(s.id).length ? ' ✓' : ''), d !== null ? h('span', { class: 'muted' }, fmtDist(d)) : null)));
+    if (!all && ordered.length > 12) list.append(h('button', { class: 'btn', type: 'button', onclick: () => draw(true) }, `ぜんぶ見る（${ordered.length}店）`));
+  };
+  draw(false);
+  return h('div', { class: 'foodshops' },
+    h('h3', { style: 'font-size:16px;margin:12px 0 4px' }, `食べられるお店 ${shops.length} 店`),
+    h('p', { class: 'muted', style: 'margin:0 0 6px' }, 'お店の名前に料理名がある店などを、地図のデータから自動で拾っています（閉店や違いがあるかもしれません）。そのお店の近くに3分いると、判子と「食べた」記録が付きます。'),
+    list,
+    h('p', { class: 'muted', style: 'margin:6px 0 0' }, '出典：© OpenStreetMap contributors（ODbL）'));
+}
 function openFoodSheet(food) {
   if (!food) { closeSheet(); return; }
   const records = mealsFor(food).sort((a, b) => (a.at < b.at ? 1 : -1));
@@ -1507,6 +1571,7 @@ function openFoodSheet(food) {
     foodPhotoEl(food),
     h('p', {}, food.summary),
     h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
+    foodShopsEl(food),
     records.length ? h('div', { class: 'list' }, records.map(foodRecordRow)) : h('p', { class: 'muted' }, 'まだ記録がありません。'),
   ]);
 }
@@ -1958,6 +2023,7 @@ function openRecord() {
         else {
           const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${seal.at}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, seal.at), source: 'seal' };
           await db.put('visits', visit);
+          await addShopMeals(spot, visit);
           seal.visitId = visit.id;
         }
       }
@@ -2082,6 +2148,7 @@ async function runPhotoImport(files) {
     await db.put('visits', visit);
     const seal = { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: m.date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId };
     await db.put('seals', seal);
+    await addShopMeals(spot, visit, { importId });
     placeSet.add(spot.id);
   }
   await loadData();
@@ -2110,6 +2177,7 @@ async function stampFromPhoto(photo, spot, importId) {
   const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, date), source: 'photo' };
   await db.put('visits', visit);
   await db.put('seals', { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId });
+  await addShopMeals(spot, visit, { importId });
   state.visits.push(visit);
   return true;
 }
@@ -2191,7 +2259,7 @@ async function spotsAround(points, margin) {
     for (const k of tilesForBounds(p.lat - margin, p.lng - margin, p.lat + margin, p.lng + margin)) keys.add(k);
   }
   await ensureTiles([...keys]);
-  return [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
+  return [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat)), ...points.flatMap((p) => (Number.isFinite(p.lat) && Number.isFinite(p.lng) ? shopsNear(p, margin) : []))];
 }
 
 function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId, pendingBtn) {
@@ -2281,6 +2349,7 @@ async function undoImport(importId) {
     await db.remove('seals', s.id);
   }
   for (const v of visits) if (v.importId === importId) await db.remove('visits', v.id);
+  for (const m of await db.getAll('meals')) if (m.importId === importId) await db.remove('meals', m.id);
   await loadData();
   render();
   toast('取り消しました');

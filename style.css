@@ -416,3 +416,5 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .pickmap { height: 200px; border-radius: 8px; border: 1px solid var(--line); }
 .welcome { margin: 0 0 8px; padding-left: 1.2em; display: grid; gap: 8px; line-height: 1.6; }
+.shoprow { display: flex; justify-content: space-between; gap: 8px; text-align: left; min-height: 40px; }
+.shoplist { margin-bottom: 4px; }
