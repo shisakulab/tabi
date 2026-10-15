@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -311,6 +311,7 @@ function closeSheet() {
   scrim.hidden = true;
   sheetEl.style.transform = '';
   destroyMaps();
+  releaseMasuPhotos();
   sheetBody.replaceChildren();
 }
 scrim.addEventListener('click', closeSheet);
@@ -641,13 +642,24 @@ function pixelGroups(spots, z) {
 }
 
 // 判子を押した日のボタン（押すと日記のその日へ）。押していなければ null
+function openDiaryOn(date) {
+  closeCard(); masuDetail = null; diaryPick = null;
+  diaryYM = { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)) }; diaryDay = date; openDiary();
+}
+// 2回以上押した場所だけ、日付の一覧を出す（1回なら「日記」ボタンだけ）
 function stampDatesEl(spotId) {
   const dates = stampDatesOf(state.visits, spotId);
-  if (!dates.length) return null;
+  if (dates.length < 2) return null;
   return h('div', { class: 'stampdates' }, dates.map((date) => h('button', {
-    class: 'stampdate', type: 'button', 'data-date': date,
-    onclick: () => { closeCard(); masuDetail = null; diaryYM = { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)) }; diaryDay = date; openDiary(); },
+    class: 'stampdate', type: 'button', 'data-date': date, onclick: () => openDiaryOn(date),
   }, `${date} に押した`)));
+}
+// 押してある場所のときだけ「日記 12/23」（いちばん新しい日の日記を開く）。押していなければ null
+function diaryBtn(spotId, style = '') {
+  const dates = stampDatesOf(state.visits, spotId);
+  if (!dates.length) return null;
+  const d = dates[0];
+  return h('button', { class: 'btn diarybtn', type: 'button', style, onclick: () => openDiaryOn(d) }, `日記 ${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`);
 }
 function showCard(spot) {
   closeCard();
@@ -669,7 +681,8 @@ function showCard(spot) {
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
     stampDatesEl(spot.id),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
-      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す')),
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す'),
+      diaryBtn(spot.id)),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('a', { class: 'btn', href: gmapUrl(spot), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, 'Googleマップで開く'),
       h('a', { class: 'btn', href: gmapUrl(spot, true), target: '_blank', rel: 'noopener', style: 'display:inline-flex;align-items:center;text-decoration:none;color:inherit' }, '経路')));
@@ -1214,18 +1227,54 @@ function masuDetailPanel() {
         const full = spotById(spot.id);
         focusSpot(full && Number.isFinite(full.lat) ? full : spot);
       } }, '地図で見る') : null,
+      diaryBtn(masuDetail.id),
       h('button', { class: 'btn', type: 'button', onclick: () => { masuDetail = null; openBook(); } }, '閉じる')));
 }
 function barEl(count, total, color) {
   const pct = total ? Math.min(100, Math.round((count / total) * 100)) : 0;
   return h('div', { class: 'bar' }, h('i', { style: `width:${pct}%;background:${color}` }));
 }
+// 帳面のマスに出す写真：マスが画面に入ったときだけ読む（マスは数千個ある）。URL はこの画面の分だけ持ち、シートを閉じたら解放する
+const masuUrls = new Map();
+let masuObserver = null;
+function releaseMasuPhotos() {
+  if (masuObserver) { masuObserver.disconnect(); masuObserver = null; }
+  for (const u of masuUrls.values()) URL.revokeObjectURL(u);
+  masuUrls.clear();
+}
+async function masuPhotoSrc(id) {
+  if (masuUrls.has(id)) return masuUrls.get(id);
+  const p = await db.get('photos', id);
+  if (!p) return null;
+  const u = URL.createObjectURL(p.blob);
+  masuUrls.set(id, u);
+  return u;
+}
+function watchMasuPhoto(el, photoId) {
+  const load = () => masuPhotoSrc(photoId).then((u) => {
+    if (!u || !el.isConnected) return;
+    el.style.backgroundImage = `url("${u}")`;
+    el.classList.add('photoed');
+  });
+  if (typeof IntersectionObserver === 'undefined') { load(); return; }
+  if (!masuObserver) {
+    masuObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { masuObserver.unobserve(e.target); e.target._loadPhoto && e.target._loadPhoto(); }
+    }, { root: sheetBody, rootMargin: '120px' });
+  }
+  el._loadPhoto = load;
+  masuObserver.observe(el);
+}
 function masuCell(c, color, isSeason) {
-  return h('button', {
+  const el = h('button', {
     class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord === false ? ' nocoord' : '') + (isSeason ? ' season' : ''),
     type: 'button', style: `--c:${color}`, title: `${c.name}${c.pref ? `（${c.pref}）` : ''}`,
     onclick: () => openMasuDetail(c.id, c.name, c.pref),
   }, glyphOf(c.name));
+  // 押した場所に写真が付いていれば、いちばん新しい写真を丸く切り抜いて出す
+  const photo = c.got ? latestPhotoForSpot(c.id) : null;
+  if (photo) watchMasuPhoto(el, photo.photoId);
+  return el;
 }
 
 // 一覧に入っていない近所の場所（神社・お寺・喫茶店など）で押した判子を、種類ごとに出す
@@ -1640,6 +1689,7 @@ function diaryDays() {
 }
 let diaryYM = null; // 表示中の月 { year, month }。null なら今月
 let diaryDay = null; // 開いている日（'YYYY-MM-DD'）。null ならカレンダー
+let diaryPick = null; // 年月ピッカーを開いているとき { year }。null なら閉じている
 function openDiary() {
   if (!diaryYM) { const d = now(); diaryYM = { year: d.getFullYear(), month: d.getMonth() + 1 }; }
   showSheet(openDiary, diaryDay ? diaryDayNodes(diaryDay) : diaryCalendarNodes());
@@ -1656,6 +1706,24 @@ function modeMarks(modes) {
   el.innerHTML = modes.slice(0, 3).map((m) => `<i title="${MODES[m].label}">${MODE_MARK[m]}</i>`).join('');
   return el;
 }
+// 年と月を選んで一気に飛ぶ：年の一覧（記録がある最初の年〜今年）と12か月のマス。記録がある月には印
+function diaryPickerEl(byDate, curYear, curMonth) {
+  const thisYear = now().getFullYear();
+  const { months, years } = diaryRange([...byDate.keys()], thisYear);
+  if (!years.includes(curYear)) years.push(curYear);
+  years.sort((a, b) => a - b);
+  const py = diaryPick.year;
+  return h('div', { class: 'pickpanel' },
+    h('div', { class: 'pickyears' }, years.map((y) => h('button', {
+      class: 'pickyear' + (y === py ? ' on' : ''), type: 'button', 'data-year': y,
+      onclick: () => { diaryPick = { year: y }; openDiary(); },
+    }, `${y}`))),
+    h('div', { class: 'pickmonths' }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) => h('button', {
+      class: 'pickmonth' + (months.has(`${py}-${String(m).padStart(2, '0')}`) ? ' has' : '') + (py === curYear && m === curMonth ? ' cur' : ''),
+      type: 'button', 'data-month': m,
+      onclick: () => { diaryYM = { year: py, month: m }; diaryPick = null; openDiary(); },
+    }, `${m}月`))));
+}
 function diaryCalendarNodes() {
   const { year, month } = diaryYM;
   const grid = monthGrid(year, month);
@@ -1670,7 +1738,7 @@ function diaryCalendarNodes() {
     const marks = modeMarks(modesOfDay(d.visits, dist.days[c.date]));
     return h('button', {
       class: 'calday' + (c.inMonth ? '' : ' out') + (c.date === today ? ' today' : ''), type: 'button', 'data-date': c.date,
-      onclick: () => { diaryDay = c.date; openDiary(); },
+      onclick: () => { diaryDay = c.date; diaryPick = null; openDiary(); },
     },
       h('span', { class: 'dn' }, String(Number(c.date.slice(8, 10)))),
       marks,
@@ -1683,9 +1751,10 @@ function diaryCalendarNodes() {
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から')),
     h('div', { class: 'calhead' },
-      h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, -1); openDiary(); }, 'aria-label': '前の月' }, '‹'),
-      h('h3', {}, `${year}年${month}月`),
-      h('button', { class: 'btn', type: 'button', onclick: () => { diaryYM = shiftMonth(year, month, 1); openDiary(); }, 'aria-label': '次の月' }, '›')),
+      h('button', { class: 'btn', type: 'button', onclick: () => { diaryPick = null; diaryYM = shiftMonth(year, month, -1); openDiary(); }, 'aria-label': '前の月' }, '‹'),
+      h('button', { class: 'calpick', type: 'button', 'aria-expanded': diaryPick ? 'true' : 'false', 'aria-label': '年と月を選ぶ', onclick: () => { diaryPick = diaryPick ? null : { year }; openDiary(); } }, `${year}年${month}月 ${diaryPick ? '▴' : '▾'}`),
+      h('button', { class: 'btn', type: 'button', onclick: () => { diaryPick = null; diaryYM = shiftMonth(year, month, 1); openDiary(); }, 'aria-label': '次の月' }, '›')),
+    diaryPick ? diaryPickerEl(byDate, year, month) : null,
     h('div', { class: 'calwd' }, [...'日月火水木金土'].map((w) => h('span', {}, w))),
     h('div', { class: 'calgrid' }, grid.weeks.flat().map(cell)),
     h('p', { class: 'muted', style: 'font-size:12px;margin-top:10px' }, '距離は、アプリを開いている間の位置から数えています（画面を消している間は数えません）。Strava などの経路（GPX）を取り込むと、その日の距離も経路の値になります。'),

@@ -285,6 +285,11 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   border-style: solid; border-color: var(--c, var(--day)); background: var(--c, var(--day)); color: #fff;
   -webkit-mask-image: var(--kasure); mask-image: var(--kasure); -webkit-mask-size: 64px 64px; mask-size: 64px 64px;
 }
+/* 写真が付いた判子：丸く切り抜いた写真（色の枠は残す。読み込めるまでは色と文字のまま） */
+.masu.got.photoed {
+  background-size: cover; background-position: center; -webkit-mask-image: none; mask-image: none; color: transparent;
+  box-shadow: 0 0 0 1.5px var(--c, var(--day));
+}
 .masu.nocoord { opacity: .6; }
 .masu.season.got { background: var(--seal); border-color: var(--seal); }
 .masudetail {
@@ -334,6 +339,16 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .calhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .calhead .btn { min-width: 44px; padding: 0; font-size: 18px; }
 .calhead h3 { font-size: 17px; }
+.calpick { flex: 1; min-height: 44px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--ink); font: 700 17px var(--serif); }
+.pickpanel { margin: 0 0 10px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.pickyears { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+.pickyear { flex: none; min-height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 18px; background: transparent; color: var(--ink); }
+.pickyear.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.pickmonths { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pickmonth { position: relative; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink2); }
+.pickmonth.has { color: var(--ink); font-weight: 700; }
+.pickmonth.has::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--seal); }
+.pickmonth.cur { border-color: var(--accent); border-width: 2px; }
 .calwd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 4px; text-align: center; font-size: 12px; color: var(--ink2); }
 .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .calday {
@@ -347,6 +362,7 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .calday .stamps { display: flex; flex-wrap: wrap; gap: 1px; justify-content: center; align-items: center; }
 .calday .modes-mark { display: flex; gap: 1px; justify-content: center; align-items: center; height: 10px; margin-top: -1px; color: var(--ink2); }
 .calday .modes-mark i { display: block; width: 10px; height: 10px; line-height: 0; }
+.diarybtn { padding: 0 12px; white-space: nowrap; }
 .stampdates { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .stampdate { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--ink); font-size: 14px; }
 .calday .more { font-size: 8px; color: var(--ink2); line-height: 1; }

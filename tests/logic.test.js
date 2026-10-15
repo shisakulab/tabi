@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -146,6 +146,13 @@ test('stampDatesOf: 押した日を新しい順に、同じ日は1つ', () => {
   ];
   assert.deepEqual(stampDatesOf(visits, 'a'), ['2024-05-01', '2023-12-23']);
   assert.deepEqual(stampDatesOf(visits, 'zz'), []);
+});
+
+test('diaryRange: 記録がある月と、最初の記録の年〜今年', () => {
+  const r = diaryRange(['2023-12-23', '2024-05-01', '2024-05-09', 'bad'], 2026);
+  assert.deepEqual([...r.months].sort(), ['2023-12', '2024-05']);
+  assert.deepEqual(r.years, [2023, 2024, 2025, 2026]);
+  assert.deepEqual(diaryRange([], 2026).years, [2026]);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

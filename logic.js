@@ -868,3 +868,17 @@ export function stampDatesOf(visits, spotId) {
   }
   return [...days].sort().reverse();
 }
+
+// 日記の年月ピッカー用：記録がある日（'YYYY-MM-DD'）から、記録がある月（'YYYY-MM'）の集合と、年の範囲（最初の記録の年〜今年）
+export function diaryRange(dates, thisYear) {
+  const months = new Set();
+  let first = thisYear;
+  for (const d of dates || []) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    months.add(d.slice(0, 7));
+    first = Math.min(first, Number(d.slice(0, 4)));
+  }
+  const years = [];
+  for (let y = first; y <= thisYear; y++) years.push(y);
+  return { months, years };
+}
