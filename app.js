@@ -701,20 +701,123 @@ function spotInfoEl(spot) {
     if (info.thumb) {
       const file = commonsFileOf(info.thumb);
       const img = h('img', { src: info.thumb, alt: spot.name, loading: 'lazy', width: 640, onerror: () => fig.remove() });
-      const fig = h('figure', { class: 'spotphoto' }, img,
-        h('figcaption', {}, '写真：', info.author || '作者不明', info.license ? `（${info.license}）` : '', '　',
-          file ? h('a', { href: 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(file.replace(/ /g, '_')), target: '_blank', rel: 'noopener' }, 'Wikimedia Commons') : 'Wikimedia Commons'));
+      const credit = () => ['写真：', info.author || '作者不明', info.license ? `（${info.license}）` : '', '　',
+        file ? h('a', { href: 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(file.replace(/ /g, '_')), target: '_blank', rel: 'noopener' }, 'Wikimedia Commons') : 'Wikimedia Commons'];
+      viewable(img, () => [{ src: info.thumb, caption: [h('b', {}, spot.name), h('br'), ...credit()] }]);
+      const fig = h('figure', { class: 'spotphoto' }, img, h('figcaption', {}, ...credit()));
       box.append(fig);
     }
     if (info.desc) box.append(h('p', { class: 'muted', style: 'margin:4px 0' }, info.desc));
   });
   return box;
 }
-// 自分の記録：その場所で撮った自分の写真（印に付いたもの）を横に並べる。無ければ null
+// ---------- 写真ビューア ----------
+// 写真を画面いっぱいに（黒い背景）。items: [{ photoId | src, date?, spotId?, lat?, lng?, caption? }]。
+// 複数あれば左右になでて次の写真へ、ピンチ・ダブルタップで拡大（拡大中は指で動かす）、× か下へなでて閉じる。
+// 下に「撮った日（押した日）」と、日記へ・地図で見るを出す。名所の写真（Commons）は caption に作者・ライセンスを入れる
+let viewerEl = null;
+let viewerKey = null;
+function closeViewer() {
+  if (!viewerEl) return;
+  viewerEl.remove(); viewerEl = null;
+  document.removeEventListener('keydown', viewerKey); viewerKey = null;
+}
+function openViewer(items, start = 0) {
+  closeViewer();
+  if (!items.length) return;
+  let idx = Math.max(0, Math.min(items.length - 1, start));
+  const track = h('div', { class: 'vtrack' });
+  const slides = items.map((it) => {
+    const img = h('img', { class: 'vimg', alt: '', draggable: 'false' });
+    (it.src ? Promise.resolve(it.src) : photoSrc(it.photoId)).then((u) => { if (u) img.src = u; });
+    return h('div', { class: 'vslide' }, img);
+  });
+  track.append(...slides);
+  const count = h('div', { class: 'vcount' });
+  const info = h('div', { class: 'vinfo' });
+  const paint = () => {
+    const it = items[idx];
+    count.textContent = items.length > 1 ? `${idx + 1} / ${items.length}` : '';
+    const canMap = it.spotId && (Number.isFinite(it.lat) || spotById(it.spotId));
+    info.replaceChildren(
+      it.date ? h('div', { class: 'vdate' }, fmtDate(it.date)) : null,
+      it.caption ? h('div', { class: 'vcap' }, it.caption) : null,
+      it.date || canMap ? h('div', { class: 'vbtns' },
+        it.date ? h('button', { class: 'btn', type: 'button', onclick: () => { closeViewer(); closeSheet(); openDiaryOn(it.date); } }, '日記へ') : null,
+        canMap ? h('button', { class: 'btn', type: 'button', onclick: () => { closeViewer(); showOnMap(it.spotId, it.lat, it.lng); } }, '地図で見る') : null) : null);
+  };
+  const close = h('button', { class: 'vclose', type: 'button', 'aria-label': '閉じる', onclick: closeViewer }, '×');
+  viewerEl = h('div', { class: 'viewer', role: 'dialog', 'aria-label': '写真' }, track, count, close, info);
+  document.body.append(viewerEl);
+  track.scrollLeft = idx * track.clientWidth;
+  paint();
+  // 何枚目か（なでて止まった位置）
+  let timer = 0;
+  track.addEventListener('scroll', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { const i = Math.round(track.scrollLeft / Math.max(1, track.clientWidth)); if (i !== idx && i >= 0 && i < items.length) { idx = i; reset(); paint(); } }, 80);
+  });
+  // 拡大（ピンチ・ダブルタップ）と、下へなでて閉じる
+  let z = { s: 1, x: 0, y: 0 };
+  const ptrs = new Map(); let pinch = null; let drag = null; let closeDy = 0; let lastTap = 0;
+  const apply = () => { slides[idx].firstChild.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.s})`; track.classList.toggle('zoomed', z.s > 1.02); };
+  function reset() { z = { s: 1, x: 0, y: 0 }; slides.forEach((sl) => { sl.firstChild.style.transform = ''; }); track.classList.remove('zoomed'); }
+  const setViewerY = (dy) => { viewerEl.style.transform = dy ? `translateY(${dy}px)` : ''; viewerEl.style.opacity = dy ? String(Math.max(0.3, 1 - dy / 400)) : ''; };
+  track.addEventListener('pointerdown', (e) => {
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: z.s }; drag = null; } else if (ptrs.size === 1) drag = { x: e.clientX, y: e.clientY, zx: z.x, zy: z.y, t: Date.now() };
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && ptrs.size >= 2) {
+      const [a, b] = [...ptrs.values()];
+      z.s = Math.max(1, Math.min(4, pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d));
+      if (z.s <= 1.02) { z.x = 0; z.y = 0; }
+      apply();
+    } else if (drag && ptrs.size === 1) {
+      const dx = e.clientX - drag.x; const dy = e.clientY - drag.y;
+      if (z.s > 1.02) { z.x = drag.zx + dx; z.y = drag.zy + dy; apply(); } else if (dy > 12 && dy > Math.abs(dx) * 1.5) { closeDy = dy; setViewerY(dy); }
+    }
+  });
+  const up = (e) => {
+    const was = ptrs.get(e.pointerId);
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pinch = null;
+    if (ptrs.size === 0) {
+      if (closeDy > 110) { closeViewer(); return; }
+      if (closeDy) { closeDy = 0; setViewerY(0); }
+      // ダブルタップで 2.5 倍 / 元に戻す
+      if (e.type === 'pointerup' && drag && was && Math.hypot(was.x - drag.x, was.y - drag.y) < 8 && Date.now() - drag.t < 300) {
+        if (Date.now() - lastTap < 350) { lastTap = 0; if (z.s > 1.02) reset(); else { z = { s: 2.5, x: 0, y: 0 }; apply(); } } else lastTap = Date.now();
+      }
+      if (z.s <= 1.02) reset();
+      drag = null;
+    }
+  };
+  track.addEventListener('pointerup', up);
+  track.addEventListener('pointercancel', up);
+  viewerKey = (e) => {
+    if (e.key === 'Escape') closeViewer();
+    else if (e.key === 'ArrowRight' && idx < items.length - 1) track.scrollTo({ left: (idx + 1) * track.clientWidth, behavior: 'auto' });
+    else if (e.key === 'ArrowLeft' && idx > 0) track.scrollTo({ left: (idx - 1) * track.clientWidth, behavior: 'auto' });
+  };
+  document.addEventListener('keydown', viewerKey);
+}
+// 写真（img）を押すとビューアで開く。items は押した時点で作る
+function viewable(img, makeItems, index = 0) {
+  img.style.cursor = 'zoom-in';
+  img.addEventListener('click', () => openViewer(makeItems(), index));
+  return img;
+}
+const itemOfSeal = (s) => ({ photoId: s.photoId, date: s.at, spotId: s.spotId || null, lat: s.lat, lng: s.lng, caption: (s.spotId && (spotById(s.spotId) || {}).name) || null });
+const itemOfMeal = (m) => ({ photoId: m.photoId, date: m.at, caption: `ご当地　${m.name}` });
+
+// 自分の記録：その場所で撮った自分の写真（印に付いたもの）を横に並べる。押すとビューアで大きく。無ければ null
 function myPhotosEl(spotId) {
   const seals = state.seals.filter((s) => s.spotId === spotId && s.photoId).sort((a, b) => (a.at < b.at ? 1 : -1));
   if (!seals.length) return null;
-  return h('div', { class: 'myphotos' }, seals.map((s) => imgFor(s.photoId, 'myph')));
+  return h('div', { class: 'myphotos' }, seals.map((s, i) => viewable(imgFor(s.photoId, 'myph'), () => seals.map(itemOfSeal), i)));
 }
 // 地図のその場所へ移って、カードを開く。区画をまだ読んでいない遠い場所は、読んでから。場所のデータが無くても位置があればそこへ寄る
 async function showOnMap(spotId, lat, lng) {
@@ -1450,11 +1553,8 @@ function sealRow(s, withDelete) {
   const where = [spot ? spot.name : '', s.pref].filter(Boolean).join('・');
   const canGo = (spot && Number.isFinite(spot.lat)) || (Number.isFinite(s.lat) && Number.isFinite(s.lng));
   const photo = s.photoId ? imgFor(s.photoId, 'ph') : null;
-  // 写真を押す：位置があれば地図のその場所へ。位置がなければ写真を大きく（もう一度押すと戻る）
-  if (photo && withDelete) {
-    photo.style.cursor = 'pointer';
-    photo.onclick = () => { if (canGo) showOnMap(s.spotId, s.lat, s.lng); else photo.classList.toggle('big'); };
-  }
+  // 写真を押すとビューアで大きく（日記へ・地図で見るはビューアの下から）
+  if (photo) viewable(photo, () => [itemOfSeal(s)]);
   return h('div', { class: 'rec' + (s.photoId ? '' : ' nophoto') },
     photo,
     h('div', {},
@@ -1513,7 +1613,7 @@ function bookFoods() {
 }
 function foodRecordRow(m) {
   return h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto') },
-    m.photoId ? imgFor(m.photoId, 'ph') : null,
+    m.photoId ? viewable(imgFor(m.photoId, 'ph'), () => [{ ...itemOfMeal(m), caption: m.note || m.name }]) : null,
     h('div', {},
       h('div', { class: 't' }, fmtDate(m.at)),
       m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null,
@@ -1969,7 +2069,7 @@ function diaryDayNodes(date) {
         return row;
       }),
       d.meals.map((m) => h('div', { class: 'rec' + (m.photoId ? '' : ' nophoto'), style: 'margin-top:6px' },
-        m.photoId ? imgFor(m.photoId, 'ph') : null,
+        m.photoId ? viewable(imgFor(m.photoId, 'ph'), () => [itemOfMeal(m)]) : null,
         h('div', {}, h('div', { class: 't' }, `ご当地　${m.name}`), m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null))),
       d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true))),
       empty ? h('p', { class: 'muted' }, '記録はありません。') : null));
