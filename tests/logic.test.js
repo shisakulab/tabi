@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -175,6 +175,19 @@ test('名所の写真データ：id の数字 % 16 の分け方で、全部の�
     }
   }
   assert.ok(n > 5000);
+});
+
+test('matchPhotoStamps: 位置が読めなかった写真の番号を返す。photoKey は写真ごとに別', () => {
+  const photos = [
+    { date: '2026-10-01', lat: 35, lng: 135 },
+    { date: '2026-10-01', lat: null, lng: null },
+    { date: null, lat: null, lng: null },
+    { date: null, lat: 35, lng: 135 },
+  ];
+  const r = matchPhotoStamps(photos, [], []);
+  assert.deepEqual(r.noLocation, [1, 2]);
+  assert.equal(r.withoutLocation, 3);
+  assert.notEqual(photoKey({ name: 'a.jpg', size: 1, lastModified: 2 }), photoKey({ name: 'a.jpg', size: 2, lastModified: 2 }));
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

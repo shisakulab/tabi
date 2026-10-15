@@ -390,6 +390,13 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .stampline.go:active { background: var(--line); }
 .rec:has(img.ph.big) { flex-wrap: wrap; }
 .rec img.ph.big { width: 100%; height: auto; max-height: 70vh; object-fit: contain; }
+.ulist { display: grid; gap: 12px; }
+.uitem { padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.uhead { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.uthumb { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; flex: none; background: var(--paper2); }
+.ucands { display: grid; gap: 4px; margin-top: 6px; }
+.ucand { justify-content: flex-start; text-align: left; min-height: 40px; }
+.umap { height: 220px; margin-top: 8px; border-radius: 10px; overflow: hidden; }
 .stampdates { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
 .stampdate { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--ink); font-size: 14px; }
 .calday .more { font-size: 8px; color: var(--ink2); line-height: 1; }

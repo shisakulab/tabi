@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -1727,6 +1727,8 @@ function openSettings() {
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から通った印')),
     h('div', { class: 'setrow' },
+      h('button', { class: 'btn', type: 'button', onclick: async () => { await db.setSetting('skippedPhotos', []); toast('スキップした写真を、次の取り込みからまた出します'); } }, 'スキップした写真をもう一度見る')),
+    h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・印・写真）'),
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '読み込む',
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: importData })),
@@ -2037,7 +2039,12 @@ async function runPhotoImport(files) {
     photos.push({ file, date, lat, lng, exif, err, sum });
   }
   const spots = await spotsAround(photos, 0.03);
-  const { matches, withoutLocation, withoutSpot, nearest } = matchPhotoStamps(photos, spots, state.visits);
+  const { matches, withoutLocation, withoutSpot, nearest, noLocation } = matchPhotoStamps(photos, spots, state.visits);
+  // 位置が読めなかった写真のうち、前にスキップしたものは出さない
+  const skipped = await skippedPhotoKeys();
+  const pending = noLocation.filter((i) => !skipped.has(photoKey(photos[i].file)));
+  const importId = db.newId();
+  const pendingBtn = pending.length ? h('button', { class: 'btn', type: 'button', style: 'width:100%;margin-top:6px', onclick: () => openUnlocatedPhotos(photos, pending, importId) }, `位置が読めなかった写真 ${pending.length}枚を見る`) : null;
   if (!matches.length) {
     // 理由が分かるように、トーストではなく画面で出す
     const lines = [];
@@ -2054,11 +2061,11 @@ async function runPhotoImport(files) {
       h('h2', { style: 'font-size:18px;margin:0 0 6px' }, '判子は付きませんでした'),
       ...lines.map((t) => h('p', { class: 'sub', style: 'margin:0 0 8px' }, t)),
       detail,
+      pendingBtn,
       h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:6px', onclick: closeSheet }, '閉じる'),
     ], () => sheetEl.classList.add('small'));
     return;
   }
-  const importId = db.newId();
   const placeSet = new Set();
   const blobCache = new Map();
   for (const m of matches) {
@@ -2079,7 +2086,101 @@ async function runPhotoImport(files) {
   }
   await loadData();
   render();
-  showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId);
+  showImportResult(files.length, placeSet.size, withoutLocation, withoutSpot, importId, pendingBtn);
+}
+
+// ---------- 位置が読めなかった写真（95） ----------
+// スキップした写真は、設定の「スキップした写真をもう一度見る」まで次の取り込みから出さない
+async function skippedPhotoKeys() { return new Set((await db.getSetting('skippedPhotos', [])) || []); }
+async function addSkippedPhotos(keys) {
+  const cur = await skippedPhotoKeys();
+  keys.forEach((k) => cur.add(k));
+  await db.setSetting('skippedPhotos', [...cur].slice(-5000));
+}
+// 写真1枚を、選んだ場所に押す（撮影日。無ければ今日）。同じ日に同じ場所が押してあれば false
+async function stampFromPhoto(photo, spot, importId) {
+  const date = photo.date || todayStr(now());
+  if (stampedOn(state.visits, spot.id, new Date(`${date}T12:00:00`))) return false;
+  let photoId = null;
+  try {
+    const id = db.newId();
+    await db.put('photos', { id, blob: await resizePhoto(photo.file) });
+    photoId = id;
+  } catch { /* 写真が保存できなくても判子は付ける */ }
+  const visit = { id: db.newId(), spotId: spot.id, at: new Date(`${date}T12:00:00`).getTime(), lat: Number.isFinite(spot.lat) ? spot.lat : null, lng: Number.isFinite(spot.lng) ? spot.lng : null, mode: state.mode, seasonal: !!seasonOf(spot, date), source: 'photo' };
+  await db.put('visits', visit);
+  await db.put('seals', { id: db.newId(), type: sealTypeFor(spot) || MEMO_TYPE, at: date, spotId: spot.id, pref: spot.pref || '', note: '', photoId, visitId: visit.id, importId });
+  state.visits.push(visit);
+  return true;
+}
+function openUnlocatedPhotos(photos, pending, importId) {
+  const objUrls = [];
+  const items = new Map(); // 写真の番号 → 行の要素
+  const head = h('p', { class: 'sub', style: 'margin:0 0 8px' });
+  const updateHead = () => { head.textContent = `位置が読めなかった写真 ${items.size}枚。場所を探して選ぶと、その写真の撮影日（無ければ今日）で判子を押します。`; };
+  const finishOne = (i) => {
+    const el = items.get(i); if (el) el.remove();
+    items.delete(i); updateHead();
+    if (!items.size) { toast('おわりました'); closeSheet(); }
+  };
+  const skipAll = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    await addSkippedPhotos([...items.keys()].map((i) => photoKey(photos[i].file)));
+    toast(`${items.size}枚をスキップしました`); closeSheet();
+  } }, 'まとめてスキップ');
+  const choose = async (i, spot) => {
+    const ok = await stampFromPhoto(photos[i], spot, importId);
+    if (ok) { await loadData(); render(); toast(`${spot.name}に判子を押しました`); } else toast('その日のその場所の判子は、もう押してあります');
+    finishOne(i);
+  };
+  const rowFor = (i) => {
+    const p = photos[i];
+    const url = URL.createObjectURL(p.file); objUrls.push(url);
+    const results = h('div', { class: 'ucands' });
+    const showCands = (spots) => results.replaceChildren(...(spots.length ? spots.map((s) => h('button', { class: 'btn ucand', type: 'button', onclick: () => choose(i, s) }, `${s.name}${s.pref ? `（${s.pref}）` : ''}${s._d != null ? `　${fmtDist(s._d)}` : ''}`)) : [h('p', { class: 'muted', style: 'margin:4px 0' }, '見つかりませんでした')]));
+    const run = (e) => {
+      const q = normalizeName(e.target.value);
+      if (!q) { results.replaceChildren(); return; }
+      const hits = allListSpots().filter((s) => Number.isFinite(s.lat) && (normalizeName(s.name).includes(q) || (kanaMap && (kanaMap.get(s.id) || '').includes(q)))).slice(0, 8);
+      showCands(hits);
+    };
+    const input = h('input', { class: 'search', type: 'search', placeholder: '場所の名前・読みで探す', autocomplete: 'off', onfocus: ensureKana, oninput: (e) => { if (!e.isComposing) run(e); }, oncompositionend: run });
+    const mapBox = h('div', { class: 'umapbox' });
+    const mapBtn = h('button', { class: 'btn', type: 'button', onclick: () => {
+      if (mapBox.firstChild) return;
+      const el = h('div', { class: 'umap' }); mapBox.append(el, h('p', { class: 'muted', style: 'margin:4px 0' }, '地図を押すと、その近くの場所が出ます'));
+      const center = state.pos ? [state.pos.lat, state.pos.lng] : [TOKYO.lat, TOKYO.lng];
+      const map = makeMap(el, { center, zoom: 14, zoomControl: true });
+      let pin = null;
+      map.on('click', async (ev) => {
+        if (pin) pin.remove();
+        pin = L.circleMarker(ev.latlng, { radius: 7, color: '#fff', weight: 2, fillColor: '#b8423a', fillOpacity: 1 }).addTo(map);
+        const pt = { lat: ev.latlng.lat, lng: ev.latlng.lng };
+        const around = (await spotsAround([pt], 0.01)).filter((s) => Number.isFinite(s.lat))
+          .map((s) => ({ ...s, _d: distanceMeters(pt, s) })).filter((s) => s._d <= 600).sort((a, b) => a._d - b._d).slice(0, 8);
+        showCands(around);
+      });
+    } }, '地図で選ぶ');
+    const skip = h('button', { class: 'btn', type: 'button', onclick: async () => { await addSkippedPhotos([photoKey(p.file)]); finishOne(i); } }, 'スキップ');
+    return h('div', { class: 'uitem' },
+      h('div', { class: 'uhead' },
+        h('img', { class: 'uthumb', src: url, alt: '', loading: 'lazy', onerror: (e) => e.target.remove() }),
+        h('div', { style: 'min-width:0;flex:1' },
+          h('div', { class: 't', style: 'word-break:break-all' }, p.file.name || '(名前なし)'),
+          h('div', { class: 'muted', style: 'font-size:13px' }, p.date ? `撮影日 ${p.date}` : `撮影日なし（今日 ${todayStr(now())} で押します）`))),
+      input, results,
+      h('div', { style: 'display:flex;gap:8px;margin-top:6px' }, mapBtn, skip),
+      mapBox);
+  };
+  for (const i of pending) items.set(i, rowFor(i));
+  updateHead();
+  showSheet(null, [
+    h('h2', { style: 'font-size:20px;margin:0 0 6px' }, '位置が読めなかった写真'),
+    head,
+    h('div', { style: 'display:flex;gap:8px;margin-bottom:10px' }, skipAll, h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'あとで')),
+    h('div', { class: 'ulist' }, [...items.values()]),
+  ]);
+  // シートを閉じたら、写真の表示用 URL を解放する
+  const watch = setInterval(() => { if (sheetEl.hidden || !document.querySelector('.ulist')) { clearInterval(watch); objUrls.forEach((u) => URL.revokeObjectURL(u)); } }, 1500);
 }
 
 // 点（{ lat, lng }）の近くの区画を読み込んで、判定に使う場所を返す（地図を開いていない場所でも判定できるように）
@@ -2093,19 +2194,20 @@ async function spotsAround(points, margin) {
   return [...spotsIn([...keys]), ...state.seasonSpots.filter((s) => Number.isFinite(s.lat))];
 }
 
-function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId) {
+function showImportResult(photoCount, placeCount, withoutLocation, withoutSpot, importId, pendingBtn) {
   toast(`${photoCount}枚から${placeCount}か所に判子。`);
   const extra = [
     withoutLocation ? `位置や日付が分からない写真 ${withoutLocation}枚` : '',
     withoutSpot ? `近くに場所がない写真 ${withoutSpot}枚` : '',
   ].filter(Boolean).join('・');
-  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId);
+  showImportSheet('写真から判子', `${photoCount}枚から${placeCount}か所に判子を付けました。${extra ? `（${extra}）` : ''}`, importId, pendingBtn);
 }
 
-function showImportSheet(title, text, importId) {
+function showImportSheet(title, text, importId, pendingBtn = null) {
   showSheet(null, [
     h('h2', { style: 'font-size:18px;margin:0 0 6px' }, title),
     h('p', { class: 'sub', style: 'margin:0 0 14px' }, text),
+    pendingBtn ? h('div', { style: 'margin:0 0 12px' }, pendingBtn) : null,
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
       h('button', { class: 'btn', type: 'button', onclick: async () => { await undoImport(importId); closeSheet(); } }, 'まとめて取り消す'),
       h('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, '閉じる')),

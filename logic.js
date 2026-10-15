@@ -638,10 +638,11 @@ export function matchPhotoStamps(photos, spots, visits, slack = PHOTO_SLACK_METE
   const seen = new Set();
   let withoutLocation = 0;
   let withoutSpot = 0;
+  const noLocation = []; // 位置が読めなかった写真の番号（あとで場所を選んで判子にする）
   let nearest = null; // 判子が付かなかった写真から、いちばん近かった場所 { name, distance }（理由を伝えるため）
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
-    if (!p || !p.date || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) { withoutLocation++; continue; }
+    if (!p || !p.date || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) { withoutLocation++; if (p && !(Number.isFinite(p.lat) && Number.isFinite(p.lng))) noLocation.push(i); continue; }
     let any = false;
     for (const spot of spots) {
       if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
@@ -660,7 +661,7 @@ export function matchPhotoStamps(photos, spots, visits, slack = PHOTO_SLACK_METE
     }
     if (!any) withoutSpot++;
   }
-  return { matches, withoutLocation, withoutSpot, nearest: matches.length ? null : nearest };
+  return { matches, withoutLocation, withoutSpot, noLocation, nearest: matches.length ? null : nearest };
 }
 
 // ---------- GPX（経路）からまとめて判子 ----------
@@ -888,3 +889,6 @@ export function shiftDay(date, n) {
   const [y, m, d] = date.split('-').map(Number);
   return todayStr(new Date(y, m - 1, d + n, 12));
 }
+
+// 写真1枚を見分ける鍵（スキップした写真を次から出さないため）。ファイル名・大きさ・更新日時
+export const photoKey = (f) => `${(f && f.name) || ''}|${(f && f.size) || 0}|${(f && f.lastModified) || 0}`;
