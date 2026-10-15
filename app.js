@@ -1,7 +1,7 @@
 import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
-  todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
+  todayStr, dailyCount, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, festivalSpot, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
@@ -1071,10 +1071,12 @@ function rerollQuests() {
   const monthly = monthlyQuests(state.seasonSpots, d, state.mode, state.pos);
   const today = new Set(); const before = new Set();
   for (const v of state.visits) (sameDay(v, d) ? today : before).add(v.spotId);
-  const want = Math.min(3, QUEST_MAX - monthly.length);
+  const maxWant = Math.min(3, QUEST_MAX - monthly.length);
   const stamped = saved.items.filter((it) => today.has(it.id)); // 今日押したお題は残す
+  if (stamped.length >= maxWant) { toast('今日のお題はもう全部押しました'); return; }
+  // 数もランダムで選び直す（押した分より多く）
+  const want = Math.min(maxWant, Math.max(dailyCount(todayStr(d), state.mode, String((saved.salt || 0) + 1)), stamped.length + 1));
   const need = want - stamped.length;
-  if (need <= 0) { toast('今日のお題はもう全部押しました'); return; }
   const used = new Set([...monthly.map((s) => s.id), ...stamped.map((it) => it.id)]);
   const avoid = new Set([...used, ...saved.items.map((it) => it.id), ...(saved.avoid || [])]);
   const salt = String((saved.salt || 0) + 1);
@@ -1095,14 +1097,17 @@ function currentQuests() {
   const today = new Set(); const before = new Set();
   for (const v of state.visits) (sameDay(v, d) ? today : before).add(v.spotId);
   const used = new Set(monthly.map((s) => s.id));
-  const want = Math.min(3, QUEST_MAX - monthly.length);
-  if (!state.pos || !DAILY_MODES.includes(state.mode) || want <= 0) { state.dailyLoop = 0; return monthly; }
+  const maxWant = Math.min(3, QUEST_MAX - monthly.length);
+  if (!state.pos || !DAILY_MODES.includes(state.mode) || maxWant <= 0) { state.dailyLoop = 0; return monthly; }
   // 同じ日・同じ旅のしかたなら、前に選んだお題を使う（開き直すと読み込んだ区画や位置の揺れで顔ぶれが変わっていた）。
   // 範囲の1.5倍より離れたものと、前に判子を押したものだけ入れ替える
   const dayKey = d.toDateString();
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(LS + 'daily.' + state.mode + '.' + loopMinutes()) || 'null'); } catch { /* 読めなければ選び直す */ }
   if (!saved || saved.day !== dayKey || saved.mode !== state.mode || !Array.isArray(saved.items)) saved = { day: dayKey, mode: state.mode, items: [] };
+  // 今日のお題の数は1〜3（日付と選び直しの回数で決まる）。少ない日は、その分遠くまで行ける
+  const salt = saved.salt ? String(saved.salt) : '';
+  const want = Math.min(dailyCount(todayStr(d), state.mode, salt), maxWant);
   const byId = new Map(allLoaded().map((s) => [s.id, s]));
   const limit = MODES[state.mode].range * 1.5;
   // 残すもの：範囲の1.5倍以内で、前の日に押していないもの。区画をまだ読んでいなければ、表示は待つが選び直さない
@@ -1110,7 +1115,7 @@ function currentQuests() {
   const kept = keepItems.filter((it) => byId.has(it.id)).map((it) => ({ ...byId.get(it.id), distance: distanceMeters(state.pos, it), daily: true }));
   const skip = new Set([...used, ...keepItems.map((it) => it.id)]);
   const need = want - keepItems.length;
-  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id) && s.kind !== 'foodshop'), d, state.mode, state.pos, today, before, need, loopMinutes()) : [];
+  const add = need > 0 && byId.size ? dailyQuests(allLoaded().filter((s) => !skip.has(s.id) && s.kind !== 'foodshop'), d, state.mode, state.pos, today, before, need, loopMinutes(), salt, new Set(saved.avoid || [])) : [];
   // 回る順（選んだときの順）のまま
   let daily = [...kept, ...add];
   let loop = saved.loop || 0;
@@ -1120,7 +1125,7 @@ function currentQuests() {
       const r = bestLoop(state.pos, items);
       items = r.order; loop = r.meters;
     }
-    try { localStorage.setItem(LS + 'daily.' + state.mode + '.' + loopMinutes(), JSON.stringify({ day: dayKey, mode: state.mode, items, loop })); } catch { /* 保存できなくても続ける */ }
+    try { localStorage.setItem(LS + 'daily.' + state.mode + '.' + loopMinutes(), JSON.stringify({ day: dayKey, mode: state.mode, items, loop, salt: saved.salt || 0, avoid: saved.avoid || [] })); } catch { /* 保存できなくても続ける */ }
     const rank = new Map(items.map((it, i) => [it.id, i]));
     daily.sort((a, b) => rank.get(a.id) - rank.get(b.id));
   } else {

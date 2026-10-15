@@ -214,8 +214,8 @@ export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore,
     .map((s) => ({ ...s, distance: distanceMeters(pos, s), daily: true }))
     .filter((s) => s.distance <= range);
   // 散歩・サイクリング：回って戻るとちょうどいい運動量になる 2〜3か所を、回る順に。loop は道のりの見積もり（m）
-  if (LOOP_TARGET[mode] && limit >= 2) {
-    const r = walkLoopQuests(cands, pos, day, hash, loopTarget(mode, minutes));
+  if (LOOP_TARGET[mode]) {
+    const r = walkLoopQuests(cands, pos, day, hash, loopTarget(mode, minutes), 24, Math.min(3, limit));
     if (r.spots.length) return r.spots.slice(0, limit).map((s) => ({ ...s, loop: r.meters }));
   }
   // 自転車：日付で混ぜた順に、まだ選んでいない分類（ご飯・寺社・その他）→ 種類 を先に取る
@@ -242,6 +242,12 @@ export const LOOP_MINUTE_CHOICES = [15, 30, 60];
 export const loopTarget = (mode, minutes = LOOP_MINUTES) => (LOOP_SPEED_KMH[mode] || 0) * 1000 * minutes / 60;
 export const WALK_DETOUR = 1.25;
 export const STEP_METERS = 0.7;
+// 今日のお題の数（1〜3）。日付・旅のしかた・選び直しの回数から決まる（同じ日は同じ数）。お題が少ない日ほど、その分遠くまで行ける（総量は同じ）
+export function dailyCount(day, mode, salt = '') {
+  const s = `count${String(day).slice(0, 10)}${mode}${salt}`;
+  let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619);
+  return 1 + ((x >>> 0) % 3);
+}
 export const KIND_DUP_PENALTY = 600; // m 相当
 export const CATEGORY_DUP_PENALTY = 2500; // m 相当。分類が重なるのは、道のりが多少ずれるより避けたい
 // 今日のお題は「ご飯」「寺社」「その他」から1つずつ出す
@@ -266,12 +272,13 @@ export function bestLoop(pos, spots) {
 }
 // 候補から、ご飯・寺社・その他が1つずつで、回る道のりが target にいちばん近い 3か所（なければ 2か所）を選ぶ。同じくらいなら日付で決まる順。
 // 候補は日付で混ぜた先頭 pool 件に絞る（組み合わせが多すぎないように）
-export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METERS, pool = 24) {
+// want：お題の数（1〜3）。1か所の日は、その1か所までの往復で総量（target）になる遠さまで取る（reach は want に関わらず往復で target を超えない距離）
+export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METERS, pool = 24, want = 3) {
   // 分類ごとに日付で混ぜた先頭から同じ数ずつ取る（喫茶店ばかりの都心でも、寺社やその他が候補に残るように）
   // 行って戻るだけで道のりを超える遠い場所は候補にしない（範囲いっぱいから取ると、遠い場所どうしの組み合わせしか残らなかった）
   const reach = (target / (2 * WALK_DETOUR)) * 1.1;
   const nearCands = cands.filter((x) => x.distance <= reach);
-  const mixed = [...(nearCands.length >= 3 ? nearCands : cands)].sort((a, b) => hash(day + a.id) - hash(day + b.id));
+  const mixed = [...(nearCands.length >= want ? nearCands : cands)].sort((a, b) => hash(day + a.id) - hash(day + b.id));
   const per = Math.ceil(pool / 3);
   const list = ['food', 'sacred', 'other'].flatMap((c) => mixed.filter((x) => questCategory(x) === c).slice(0, per));
   // 分類が足りない場所（神社しかない等）では、残りを混ぜた順で足して pool 件にする
@@ -279,7 +286,7 @@ export function walkLoopQuests(cands, pos, day, hash, target = WALK_TARGET_METER
   let best = null;
   const kindCount = new Set(list.map((x) => x.kind)).size;
   const catCount = new Set(list.map(questCategory)).size;
-  for (const k of [3, 2]) {
+  for (const k of want >= 3 ? [3, 2] : [want]) {
     if (list.length < k) continue;
     const idx = Array.from({ length: k }, (_, i) => i);
     for (;;) {

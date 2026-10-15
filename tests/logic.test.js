@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  festivalSpot, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, dailyCount, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
 import { readFileSync } from 'node:fs';
@@ -813,4 +813,20 @@ test("dailyQuests: salt で選び直し、avoid の場所は出さない", () =>
   assert.ok(b.every((s) => !ids.has(s.id)), "前のお題は出さない");
   assert.deepEqual(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3, 30, "1", ids).map((s) => s.id), b.map((s) => s.id));
   assert.deepEqual(dailyQuests(spots.slice(0, 3), d, "walk", pos, new Set(), new Set(), 3, 30, "1", new Set(spots.slice(0, 3).map((s) => s.id))), []);
+});
+
+test("dailyCount: 1〜3 に散らばり、同じ日は同じ数。1か所の日は総量いっぱいの遠さ（往復約2.5km＝約1km先）まで取る", () => {
+  const seen = new Set();
+  for (let i = 1; i <= 60; i++) { const n = dailyCount("2026-10-" + String(i % 28 + 1).padStart(2, "0"), i % 2 ? "walk" : "bike", i % 3 ? "" : "1"); assert.ok(n >= 1 && n <= 3); seen.add(n); }
+  assert.equal(seen.size, 3);
+  assert.equal(dailyCount("2026-10-15", "walk"), dailyCount("2026-10-15", "walk"));
+  const pos = { lat: 35, lng: 135 };
+  const spots = [];
+  for (let i = 0; i < 30; i++) { const m = 150 + i * 60; spots.push({ id: "p" + i, kind: ["cafe", "shrine", "museum"][i % 3], name: "p" + i, lat: 35 + m / 111000, lng: 135 }); }
+  const d = new Date(2026, 9, 15, 12);
+  const one = dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 1);
+  assert.equal(one.length, 1);
+  assert.ok(one[0].distance > 700 && one[0].distance < 1300, "1か所なら約1km先: " + one[0].distance);
+  assert.equal(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 2).length, 2);
+  assert.equal(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3).length, 3);
 });
