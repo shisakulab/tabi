@@ -347,6 +347,8 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .calday .stamps { display: flex; flex-wrap: wrap; gap: 1px; justify-content: center; align-items: center; }
 .calday .modes-mark { display: flex; gap: 1px; justify-content: center; align-items: center; height: 10px; margin-top: -1px; color: var(--ink2); }
 .calday .modes-mark i { display: block; width: 10px; height: 10px; line-height: 0; }
+.stampdates { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.stampdate { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--card); color: var(--ink); font-size: 14px; }
 .calday .more { font-size: 8px; color: var(--ink2); line-height: 1; }
 .calday .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ink2); opacity: .6; }
 

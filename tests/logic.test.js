@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -136,6 +136,16 @@ test('もう無い催し・施設は一覧から外れ、座標なしの観光�
   const kanko = JSON.parse(readFileSync(new URL('../data/lists.json', import.meta.url), 'utf8')).lists.find((l) => l.key === 'kanko');
   assert.ok(!kanko.items.some((it) => CLOSED_SPOTS.has(it[0])));
   assert.equal(kanko.items.filter((it) => !it[3]).length, 293 - 8); // 座標なし：293 のうち、閉園などで外した8件を除く（残り285件）
+});
+
+test('stampDatesOf: 押した日を新しい順に、同じ日は1つ', () => {
+  const at = (y, m, d, h = 12) => new Date(y, m - 1, d, h).getTime();
+  const visits = [
+    { spotId: 'a', at: at(2023, 12, 23) }, { spotId: 'a', at: at(2024, 5, 1, 9) }, { spotId: 'a', at: at(2024, 5, 1, 18) },
+    { spotId: 'b', at: at(2025, 1, 1) }, { spotId: 'a' },
+  ];
+  assert.deepEqual(stampDatesOf(visits, 'a'), ['2024-05-01', '2023-12-23']);
+  assert.deepEqual(stampDatesOf(visits, 'zz'), []);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

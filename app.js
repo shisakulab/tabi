@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -640,6 +640,15 @@ function pixelGroups(spots, z) {
   return [...cells.values()].map((c) => ({ n: c.n, lat: c.lat / c.n, lng: c.lng / c.n }));
 }
 
+// 判子を押した日のボタン（押すと日記のその日へ）。押していなければ null
+function stampDatesEl(spotId) {
+  const dates = stampDatesOf(state.visits, spotId);
+  if (!dates.length) return null;
+  return h('div', { class: 'stampdates' }, dates.map((date) => h('button', {
+    class: 'stampdate', type: 'button', 'data-date': date,
+    onclick: () => { closeCard(); masuDetail = null; diaryYM = { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)) }; diaryDay = date; openDiary(); },
+  }, `${date} に押した`)));
+}
 function showCard(spot) {
   closeCard();
   const d = now();
@@ -658,6 +667,7 @@ function showCard(spot) {
     bestMonthsOf(spot) ? h('p', { class: 'muted', style: 'margin:4px 0' }, `ベストシーズン ${formatBestMonths(bestMonthsOf(spot))}`) : null,
     season ? h('p', { class: 'muted', style: 'margin:4px 0' }, `いまは見頃（${season.label}）。ここで押すと季節の判子です。`) : null,
     h('p', { class: 'muted', style: 'margin:4px 0' }, mine.length ? `判子 ${mine.length} 回` : 'まだ判子はありません'),
+    stampDatesEl(spot.id),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
       h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => stamp(spot) }, '判子を押す')),
     h('div', { style: 'display:flex;gap:8px;margin-top:6px' },
@@ -1195,6 +1205,7 @@ function masuDetailPanel() {
   return h('div', { class: 'masudetail' },
     h('div', {}, h('b', {}, masuDetail.name), masuDetail.pref ? h('span', { class: 'muted' }, '　' + masuDetail.pref) : null),
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
+    stampDatesEl(masuDetail.id),
     h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
       hasCoord ? h('button', { class: 'btn primary', type: 'button', onclick: async () => {
         masuDetail = null; closeSheet();

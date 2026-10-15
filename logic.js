@@ -858,3 +858,13 @@ export function markKindOf(spot) {
 
 // 何度も通った・押した場所ほど濃く：1回＝1、2〜3回＝2、4〜9回＝3、10回以上＝4（0回以下は 0）
 export function visitLevel(n) { return !(n > 0) ? 0 : n >= 10 ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1; }
+
+// その場所に判子を押した日（'YYYY-MM-DD'）を新しい順に。同じ日に何回押しても1日分
+export function stampDatesOf(visits, spotId) {
+  const days = new Set();
+  for (const v of visits || []) {
+    if (!v || v.spotId !== spotId || !Number.isFinite(v.at)) continue;
+    days.add(todayStr(new Date(v.at)));
+  }
+  return [...days].sort().reverse();
+}
