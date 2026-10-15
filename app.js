@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -1587,6 +1587,18 @@ function openDiary() {
   if (!diaryYM) { const d = now(); diaryYM = { year: d.getFullYear(), month: d.getMonth() + 1 }; }
   showSheet(openDiary, diaryDay ? diaryDayNodes(diaryDay) : diaryCalendarNodes());
 }
+// 日記のマスに出す、旅のしかたの小さなマーク（線画。色は文字色に合わせる）
+const MODE_MARK = {
+  walk: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><circle cx="9" cy="2.6" r="1.6" fill="currentColor"/><path d="M9 5 7 8.5l2.5 2 .5 4M7 8.5 4.5 10M9.3 7l2.7 1.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 8.5 6 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  bike: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="3.6" cy="11" r="2.6"/><circle cx="12.4" cy="11" r="2.6"/><path d="M3.6 11 6.5 5.5h4l1.9 5.5M6.5 5.5 8 11h4.4M5.5 4h2"/></g></svg>',
+  trip: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path d="M14.5 8 9.3 6.6 6.4 1.5H5l1.4 5.3L3 7.4 1.8 5.9H.8l.9 2.1-.9 2.1h1l1.2-1.5 3.4.6L5 14.5h1.4l2.9-5.1 5.2-1.4z" fill="currentColor"/></svg>',
+};
+function modeMarks(modes) {
+  if (!modes.length) return null;
+  const el = h('span', { class: 'modes-mark' });
+  el.innerHTML = modes.slice(0, 3).map((m) => `<i title="${MODES[m].label}">${MODE_MARK[m]}</i>`).join('');
+  return el;
+}
 function diaryCalendarNodes() {
   const { year, month } = diaryYM;
   const grid = monthGrid(year, month);
@@ -1598,11 +1610,13 @@ function diaryCalendarNodes() {
     const shown = items.slice(0, 3);
     const extra = items.length - shown.length;
     const onlyMemo = !items.length && d.seals.length > 0;
+    const marks = modeMarks(modesOfDay(d.visits, dist.days[c.date]));
     return h('button', {
       class: 'calday' + (c.inMonth ? '' : ' out') + (c.date === today ? ' today' : ''), type: 'button', 'data-date': c.date,
       onclick: () => { diaryDay = c.date; openDiary(); },
     },
       h('span', { class: 'dn' }, String(Number(c.date.slice(8, 10)))),
+      marks,
       items.length ? h('span', { class: 'stamps' }, shown.map(miniHanko), extra > 0 ? h('span', { class: 'more' }, `+${extra}`) : null)
         : onlyMemo ? h('span', { class: 'dot' }) : null);
   };

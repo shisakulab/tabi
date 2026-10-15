@@ -823,3 +823,11 @@ export function majorityMonths(bestLists) {
   for (let m = 1; m <= 12; m++) if (lists.filter((b) => b.includes(m)).length * 2 >= lists.length) out.push(m);
   return out;
 }
+
+// その日に使った旅のしかた（散歩・サイクリング・旅行の順）。移動距離（dist の walk/bike/trip > 0）か、visits の mode
+export function modesOfDay(visits, distRec) {
+  const used = new Set();
+  for (const k of ['walk', 'bike', 'trip']) if (distRec && Number(distRec[k]) > 0) used.add(k);
+  for (const v of visits || []) if (v && v.mode) used.add(normalizeMode(v.mode));
+  return ['walk', 'bike', 'trip'].filter((k) => used.has(k));
+}

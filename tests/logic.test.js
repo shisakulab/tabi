@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -95,6 +95,13 @@ test('majorityMonths: 半数以上の場所でベストに入る月だけ、無�
   assert.deepEqual(majorityMonths([[5, 6], [7, 8]]), [5, 6, 7, 8]);
   assert.deepEqual(majorityMonths([[1], [2], [3]]), []);
   assert.deepEqual(majorityMonths([null, []]), []);
+});
+
+test('modesOfDay: 移動距離か visits の mode から、散歩・サイクリング・旅行の順に', () => {
+  assert.deepEqual(modesOfDay([], { walk: 100 }), ['walk']);
+  assert.deepEqual(modesOfDay([{ mode: 'trip' }, { mode: 'bike' }], { walk: 5, bike: 0 }), ['walk', 'bike', 'trip']);
+  assert.deepEqual(modesOfDay([{ mode: 'plane' }, {}], null), ['trip']);
+  assert.deepEqual(modesOfDay([], { walk: 0 }), []);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {
