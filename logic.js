@@ -831,3 +831,7 @@ export function modesOfDay(visits, distRec) {
   for (const v of visits || []) if (v && v.mode) used.add(normalizeMode(v.mode));
   return ['walk', 'bike', 'trip'].filter((k) => used.has(k));
 }
+
+// 和風月名（1〜12月）
+export const WAFU_MONTHS = ['睦月', '如月', '弥生', '卯月', '皐月', '水無月', '文月', '葉月', '長月', '神無月', '霜月', '師走'];
+export const wafuMonth = (month) => WAFU_MONTHS[month - 1] || `${month}月`;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -102,6 +102,13 @@ test('modesOfDay: 移動距離か visits の mode から、散歩・サイクリ
   assert.deepEqual(modesOfDay([{ mode: 'trip' }, { mode: 'bike' }], { walk: 5, bike: 0 }), ['walk', 'bike', 'trip']);
   assert.deepEqual(modesOfDay([{ mode: 'plane' }, {}], null), ['trip']);
   assert.deepEqual(modesOfDay([], { walk: 0 }), []);
+});
+
+test('wafuMonth: 和風月名', () => {
+  assert.equal(wafuMonth(1), '睦月');
+  assert.equal(wafuMonth(10), '神無月');
+  assert.equal(wafuMonth(12), '師走');
+  assert.equal(Array.from({ length: 12 }, (_, i) => wafuMonth(i + 1)).join(''), '睦月如月弥生卯月皐月水無月文月葉月長月神無月霜月師走');
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

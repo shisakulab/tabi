@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -822,8 +822,8 @@ function questDone(spot) {
   if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
   return seasonalVisitsOf(spot.id).some((v) => sameMonth(v, d));
 }
-// 散歩・サイクリングは毎日変わるので「今日のお題」、旅行は見頃の名所なので「10月のお題」
-const questTitle = () => (DAILY_MODES.includes(state.mode) ? '今日のお題' : `${now().getMonth() + 1}月のお題`);
+// 散歩・サイクリングは毎日変わるので「今日のお題」、旅行は見頃の名所なので「神無月のお題」（和風月名）
+const questTitle = () => (DAILY_MODES.includes(state.mode) ? '今日のお題' : `${wafuMonth(now().getMonth() + 1)}のお題`);
 const questMark = (s) => (s.daily ? '今日' : s.seasons[0].mark);
 const questLabel = (s) => (s.daily ? `今日のお題・${spotTags(s)[0] || '近所'}` : s.seasons[0].label);
 function drawQuest() {
