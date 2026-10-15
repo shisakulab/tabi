@@ -882,3 +882,9 @@ export function diaryRange(dates, thisYear) {
   for (let y = first; y <= thisYear; y++) years.push(y);
   return { months, years };
 }
+
+// 'YYYY-MM-DD' を n 日ずらす（月・年をまたいでもよい。端末の時刻のずれに左右されないよう正午で計算）
+export function shiftDay(date, n) {
+  const [y, m, d] = date.split('-').map(Number);
+  return todayStr(new Date(y, m - 1, d + n, 12));
+}

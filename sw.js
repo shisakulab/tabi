@@ -1,6 +1,6 @@
 // キャッシュ優先。ファイルを変えたら VERSION を上げる
 // Leaflet は vendor/ に同梱。地図タイルはキャッシュしない。data/ は取得時にキャッシュ
-const VERSION = 'tabigoyomi-v66';
+const VERSION = 'tabigoyomi-v67';
 const FILES = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const FILES = [
   './data/lists.json',
   './data/seasons-coords.json',
   './data/foods.json',
+  './data/food-photos.json',
   './data/kana.json',
   './data/climate.json',
   './data/countries.geojson',
@@ -43,7 +44,7 @@ self.addEventListener('fetch', (e) => {
   // http(s) 以外（data:・blob: など）と別オリジンは、Service Worker を通さずそのまま
   if (!/^https?:$/.test(url.protocol) || url.origin !== self.location.origin) return;
   // 区画のデータ（data/spots/）は、取得したときにキャッシュする
-  if (url.origin === self.location.origin && url.pathname.includes('/data/spots/')) {
+  if (url.origin === self.location.origin && (url.pathname.includes('/data/spots/') || url.pathname.includes('/data/foods/'))) {
     e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request, { cache: 'reload' }).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(e.request, copy)); }
       return res;

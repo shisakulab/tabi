@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -155,11 +155,12 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods, climate] = await Promise.all([
+  const [lists, coords, meta, foods, climate, foodPhotos] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
-    fetchJson('data/climate.json', { spots: {} }),
+    fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}),
   ]);
   state.foods = foods;
+  state.foodPhotos = foodPhotos;
   state.climate = climate;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
@@ -1407,6 +1408,14 @@ async function deleteMeal(m) {
 let bookScroll = 0;
 function backToBook() { openBook(); sheetBody.scrollTop = bookScroll; }
 const backBtn = (onclick, label = '‹ 帳面に戻る') => h('button', { class: 'btn', type: 'button', onclick }, label);
+// 農林水産省「うちの郷土料理」の写真（リポジトリに置いた幅640pxのもの）。出典と、あれば画像提供元を下に出す。無ければ null
+function foodPhotoEl(food) {
+  const p = (state.foodPhotos || {})[food.key];
+  if (!p) return null;
+  return h('figure', { class: 'foodphoto' },
+    h('img', { src: 'data/' + p.file, alt: food.name, loading: 'lazy', width: 640 }),
+    h('figcaption', {}, '出典：農林水産省「うちの郷土料理」', p.credit ? `　画像提供元：${p.credit}` : ''));
+}
 function openFoodSheet(food) {
   if (!food) { closeSheet(); return; }
   const records = mealsFor(food).sort((a, b) => (a.at < b.at ? 1 : -1));
@@ -1416,6 +1425,7 @@ function openFoodSheet(food) {
       h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => openMealRecord(food) }, '食べた')),
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, food.name),
     h('p', { class: 'sub', style: 'margin:0 0 8px' }, food.pref),
+    foodPhotoEl(food),
     h('p', {}, food.summary),
     h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
     records.length ? h('div', { class: 'list' }, records.map(foodRecordRow)) : h('p', { class: 'muted' }, 'まだ記録がありません。'),
@@ -1763,10 +1773,15 @@ function diaryCalendarNodes() {
 function diaryDayNodes(date) {
   const d = diaryDays().get(date) || { date, visits: [], seals: [], meals: [] };
   const empty = !d.visits.length && !d.seals.length && !d.meals.length && !distText(dist.days[date]);
-  return [
+  // 前の日・次の日へ（記録のない日も1日ずつ）。月をまたいだら、カレンダーに戻ったときもその月
+  const go = (n) => { diaryDay = shiftDay(date, n); diaryYM = { year: Number(diaryDay.slice(0, 4)), month: Number(diaryDay.slice(5, 7)) }; openDiary(); };
+  const wrap = h('div', { class: 'daywrap' },
     h('button', { class: 'btn', type: 'button', style: 'margin-bottom:10px', onclick: () => { diaryDay = null; openDiary(); } }, '‹ カレンダーへ'),
     h('section', { class: 'day' },
-      h('h3', {}, fmtDate(d.date)),
+      h('div', { class: 'dayhead' },
+        h('button', { class: 'btn daynav', type: 'button', 'aria-label': '前の日', onclick: () => go(-1) }, '‹'),
+        h('h3', {}, fmtDate(d.date)),
+        h('button', { class: 'btn daynav', type: 'button', 'aria-label': '次の日', onclick: () => go(1) }, '›')),
       distText(dist.days[d.date]) ? h('p', { class: 'muted', style: 'margin:0 0 6px' }, `移動：${distText(dist.days[d.date])}`) : null,
       d.visits.map((v) => {
         const s = spotById(v.spotId);
@@ -1779,8 +1794,15 @@ function diaryDayNodes(date) {
         m.photoId ? imgFor(m.photoId, 'ph') : null,
         h('div', {}, h('div', { class: 't' }, `ご当地　${m.name}`), m.note ? h('div', { class: 'n', style: 'white-space:normal' }, m.note) : null))),
       d.seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true))),
-      empty ? h('p', { class: 'muted' }, 'まだ記録がありません。') : null),
-  ];
+      empty ? h('p', { class: 'muted' }, '記録はありません。') : null));
+  // 左右になでても移れる（縦のなでは、シートを閉じる・スクロールに任せる）
+  let sx = 0, sy = 0;
+  wrap.addEventListener('touchstart', (e) => { const t = e.changedTouches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+  wrap.addEventListener('touchend', (e) => {
+    const t = e.changedTouches[0]; const dx = t.clientX - sx; const dy = t.clientY - sy;
+    if (Math.abs(dx) > 70 && Math.abs(dy) < 45 && Math.abs(dx) > Math.abs(dy) * 2) go(dx > 0 ? -1 : 1);
+  }, { passive: true });
+  return [wrap];
 }
 
 // ---------- 印を記録する ----------
