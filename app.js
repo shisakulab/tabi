@@ -28,7 +28,7 @@ const mapEl = $('map'); const questEl = $('quest'); const nearEl = $('near'); co
 const fabEl = $('fab'); const scrim = $('scrim'); const sheetEl = $('sheet'); const sheetBody = $('sheetbody');
 const grabEl = $('grab'); const toastEl = $('toast'); const locateEl = $('locate'); const settingsEl = $('settings');
 
-const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], shopSpots: [], foodShops: {}, foods: [], tab: 'spots', fixes: [], climate: null };
+const state = { visits: [], seals: [], meals: [], mode: 'walk', pos: null, acc: null, posAt: 0, maps: [], lists: [], catalog: new Map(), seasonSpots: [], shopSpots: [], foodShops: {}, foods: [], worldFoods: [], tab: 'spots', fixes: [], climate: null };
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 動作確認用：?date=2026-11-12 で今日の日付を差し替える
@@ -156,13 +156,15 @@ const fetchJson = (url, fallback) => fetch(url).then((r) => (r.ok ? r.json() : f
 
 // 一覧の定義（data/lists.json）と、季節の名所（themes/seasons.js）、ご当地グルメ（data/foods.json）を読み込む
 async function loadCatalog() {
-  const [lists, coords, meta, foods, climate, foodPhotos, foodShops] = await Promise.all([
+  const [lists, coords, meta, foods, climate, foodPhotos, foodShops, worldFoods] = await Promise.all([
     fetchJson('data/lists.json', { lists: [] }), fetchJson('data/seasons-coords.json', {}), fetchJson('data/spots/meta.json', {}), fetchJson('data/foods.json', []),
-    fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}), fetchJson('data/food-shops.json', {}),
+    fetchJson('data/climate.json', { spots: {} }), fetchJson('data/food-photos.json', {}), fetchJson('data/food-shops.json', {}), fetchJson('data/world-foods.json', []),
   ]);
   state.foods = foods;
   state.foodPhotos = foodPhotos;
   buildShopSpots(foodShops);
+  // 日本以外のご当地（Wikidata：data/world-foods.json）。日本のご当地と同じ形（key・name・summary）に country を足したもの。記録も同じ meals に付く
+  state.worldFoods = (worldFoods || []).map((r) => ({ key: r.key, name: r.name, pref: '', country: r.country, summary: r.desc || '', world: true, photo: r.photo || null, qid: r.key.replace(/^w_(Q\d+).*/, '$1') }));
   state.climate = climate;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
@@ -210,6 +212,9 @@ function buildShopSpots(foodShops) {
   }
   state.shopSpots = [...byId.values()];
 }
+// 日本のご当地は県、日本以外は国
+const foodWhere = (f) => f.pref || f.country || '';
+const foodByKey = (k) => state.foods.find((f) => f.key === k) || state.worldFoods.find((f) => f.key === k) || null;
 const foodNamesOf = (spot) => (spot.foodKeys || []).map((k) => (state.foods.find((f) => f.key === k) || {}).name).filter(Boolean).join('・');
 // お店の判子を押したら、そのお店の料理の「食べた」記録も付ける（同じ日・同じお店・同じ料理はもう付けない）。付けた料理の数を返す
 async function addShopMeals(spot, visit, extra = {}) {
@@ -1576,7 +1581,7 @@ const mealsFor = (food) => state.meals.filter((m) => m.itemKey === food.key);
 function foodMasu(f) {
   const got = mealsFor(f).length > 0;
   return h('button', {
-    class: 'masu' + (got ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: `${f.name}（${f.pref}）`,
+    class: 'masu' + (got ? ' got' : ''), type: 'button', style: `--c:${FOOD_COLOR}`, title: `${f.name}（${foodWhere(f)}）`,
     onclick: () => { bookScroll = sheetBody.scrollTop; openFoodSheet(f); },
   }, glyphOf(f.name));
 }
@@ -1624,7 +1629,7 @@ async function deleteMeal(m) {
   await db.remove('meals', m.id);
   if (m.photoId) await db.remove('photos', m.photoId);
   await loadData();
-  openFoodSheet(state.foods.find((f) => f.key === m.itemKey));
+  openFoodSheet(foodByKey(m.itemKey));
 }
 // 帳面から開いた詳細は「帳面に戻る」で、同じタブ・同じスクロール位置へ戻す
 let bookScroll = 0;
@@ -1632,6 +1637,17 @@ function backToBook() { openBook(); sheetBody.scrollTop = bookScroll; }
 const backBtn = (onclick, label = '‹ 帳面に戻る') => h('button', { class: 'btn', type: 'button', onclick }, label);
 // 農林水産省「うちの郷土料理」の写真（リポジトリに置いた幅640pxのもの）。出典と、あれば画像提供元を下に出す。無ければ null
 function foodPhotoEl(food) {
+  if (food.world) {
+    // Wikidata の P18（Commons の写真。作者・ライセンスつき）
+    if (!food.photo) return null;
+    const url = COMMONS_THUMB + food.photo[0];
+    const file = commonsFileOf(url);
+    const credit = () => ['写真：', food.photo[1] || '作者不明', food.photo[2] ? `（${food.photo[2]}）` : '', '　',
+      file ? h('a', { href: 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(file.replace(/ /g, '_')), target: '_blank', rel: 'noopener' }, 'Wikimedia Commons') : 'Wikimedia Commons'];
+    const img = viewable(h('img', { src: url, alt: food.name, loading: 'lazy', width: 500, onerror: () => fig.remove() }), () => [{ src: url, caption: [h('b', {}, food.name), h('br'), ...credit()] }]);
+    const fig = h('figure', { class: 'foodphoto' }, img, h('figcaption', {}, ...credit()));
+    return fig;
+  }
   const p = (state.foodPhotos || {})[food.key];
   if (!p) return null;
   return h('figure', { class: 'foodphoto' },
@@ -1667,10 +1683,12 @@ function openFoodSheet(food) {
       backBtn(backToBook),
       h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: () => openMealRecord(food) }, '食べた')),
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, food.name),
-    h('p', { class: 'sub', style: 'margin:0 0 8px' }, food.pref),
+    h('p', { class: 'sub', style: 'margin:0 0 8px' }, foodWhere(food)),
     foodPhotoEl(food),
     h('p', {}, food.summary),
-    h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
+    food.world
+      ? h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: `https://www.wikidata.org/wiki/${food.qid}`, target: '_blank', rel: 'noopener' }, 'Wikidata'), '（CC0）')
+      : h('p', { class: 'muted', style: 'margin-bottom:14px' }, '出典：', h('a', { href: food.url, target: '_blank', rel: 'noopener' }, '農林水産省「うちの郷土料理」'), '（一部を要約）'),
     foodShopsEl(food),
     records.length ? h('div', { class: 'list' }, records.map(foodRecordRow)) : h('p', { class: 'muted' }, 'まだ記録がありません。'),
   ]);
@@ -1690,6 +1708,7 @@ function openMealRecord(food) {
         id: db.newId(), kind: 'food', name: food.name, itemKey: food.key, at: date.value || todayStr(now()),
         pref: food.pref, note: note.value.trim(), photoId,
       };
+      if (food.world) meal.country = food.country;
       await db.put('meals', meal);
       await loadData();
       openFoodSheet(food);
@@ -1699,7 +1718,7 @@ function openMealRecord(food) {
   showSheet(null, [h('div', { class: 'form' },
     h('div', {}, backBtn(() => openFoodSheet(food), '‹ 戻る')),
     h('h2', { style: 'font-size:20px' }, food.name),
-    h('p', { class: 'sub', style: 'margin:0' }, food.pref),
+    h('p', { class: 'sub', style: 'margin:0' }, foodWhere(food)),
     h('label', { class: 'f' }, '日付', date),
     h('div', { class: 'f' }, h('div', { class: 'muted' }, '写真'), h('div', { class: 'photoRow' },
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '写真を選ぶ',
@@ -1803,6 +1822,14 @@ function bookCountryDetail(country) {
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
   }).filter(Boolean);
   const best = countryBestMonths(spots, country);
+  const wf = worldFoodsOf(country);
+  if (wf.length) {
+    const gotF = wf.filter((f) => mealsFor(f).length > 0).length;
+    sections.unshift(h('details', { class: 'listgroup' + (gotF ? ' got' : ''), open: true },
+      h('summary', {}, h('b', {}, 'ご当地'), h('span', { class: 'n' }, `${gotF} / ${wf.length}`)),
+      h('div', { class: 'masus' }, wf.map(foodMasu)),
+      h('p', { class: 'muted', style: 'margin:6px 0 0;font-size:12px' }, '料理は Wikidata（CC0）から、Wikipedia の言語版が多い順に')));
+  }
   return [
     masuDetailPanel(),
     h('div', { style: 'display:flex;gap:8px;align-items:center;margin:0 0 8px' },
@@ -1844,11 +1871,12 @@ function worldMapEl(countries, counts) {
   }, 0);
   return el;
 }
+function worldFoodsOf(country) { return state.worldFoods.filter((f) => f.country === country); }
 function bookCountries() {
   if (countryDetail) return bookCountryDetail(countryDetail);
   const spots = globalSpots();
   const counts = countriesVisited(state.visits, spots);
-  const countries = countriesOf(spots).sort((a, b) => {
+  const countries = [...new Set([...countriesOf(spots), ...state.worldFoods.map((f) => f.country)])].sort((a, b) => {
     const d = (counts[b] || 0) - (counts[a] || 0);
     if (d) return d;
     if (a === '日本') return -1;
@@ -1859,7 +1887,16 @@ function bookCountries() {
   const sectionsFor = (q) => countries.map((country) => {
     const p = countryProgress(state.visits, spots, country);
     const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || normalizeName(country).includes(q)) : p.cells;
-    if (!p.total || !cells.length) return null;
+    if (!p.total) {
+      // 世界遺産などは無く、ご当地だけがある国
+      const foods = worldFoodsOf(country).filter((f) => !q || normalizeName(f.name).includes(q) || normalizeName(country).includes(q));
+      if (!foods.length) return null;
+      const gotF = foods.filter((f) => mealsFor(f).length > 0).length;
+      return h('details', { class: 'listgroup' + (gotF ? ' got' : ''), open: !!q || foods.length <= FOLD_OVER },
+        h('summary', {}, h('b', {}, country), h('span', { class: 'n' }, `ご当地 ${gotF} / ${foods.length}`)),
+        h('div', { class: 'masus' }, foods.map(foodMasu)));
+    }
+    if (!cells.length) return null;
     return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
       h('summary', {}, h('b', {}, country), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
       barEl(p.count, p.total, TIER_COLOR.list),
@@ -1867,7 +1904,7 @@ function bookCountries() {
   }).filter(Boolean);
   return [
     masuDetailPanel(),
-    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countries.length}（国を押すとその国へ。濃い色＝判子あり、薄い色＝世界遺産あり）`),
+    h('p', { class: 'sub' }, `判子のある国：${visited.length} / ${countriesOf(spots).length}（国を押すとその国へ。濃い色＝判子あり、薄い色＝世界遺産・ご当地あり）`),
     worldMapEl(countries, counts),
     ...searchBox('countrysearch', '国名・名前で探す', countryQuery, (v) => { countryQuery = v; }, () => {
       const sections = sectionsFor(normalizeName(countryQuery));

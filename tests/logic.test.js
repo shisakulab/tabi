@@ -726,3 +726,25 @@ test('お店の場所（kind: foodshop）：飲食のマークで、範囲に3�
   assert.equal(shouldAutoStamp(shop, fixes(3), 'walk', [], new Date(at0 + 200000)), true);
   assert.equal(shouldAutoStamp(shop, fixes(2), 'walk', [], new Date(at0 + 200000)), false);
 });
+
+// ---------- 日本以外のご当地（data/world-foods.json、Wikidata CC0） ----------
+test('world-foods.json: 国は国境データの名前、国ごとに10品まで、日本は入れず、写真は Commons のパスと作者・ライセンスつき', () => {
+  const raw = readFileSync(new URL('../data/world-foods.json', import.meta.url), 'utf8');
+  const foods = JSON.parse(raw);
+  const geo = JSON.parse(readFileSync(new URL('../data/countries.geojson', import.meta.url), 'utf8'));
+  const known = new Set(geo.features.map((f) => f.properties.n));
+  assert.ok(raw.length < 300 * 1024, 'サイズ');
+  assert.ok(foods.length >= 200);
+  const keys = new Set(); const per = {};
+  for (const f of foods) {
+    assert.match(f.key, /^w_Q\d+(_\d+)?$/);
+    assert.ok(!keys.has(f.key), f.key); keys.add(f.key);
+    assert.ok(f.name, f.key);
+    assert.ok(known.has(f.country), f.country);
+    assert.notEqual(f.country, '日本');
+    per[f.country] = (per[f.country] || 0) + 1;
+    if (f.photo) { assert.match(f.photo[0], /^(thumb\/)?[0-9a-f]\/[0-9a-f]{2}\//); assert.ok(f.photo[2], 'ライセンス'); }
+  }
+  assert.ok(Object.keys(per).length >= 50, '国の数');
+  assert.ok(Object.values(per).every((n) => n <= 10));
+});
