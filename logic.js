@@ -835,3 +835,26 @@ export function modesOfDay(visits, distRec) {
 // 和風月名（1〜12月）
 export const WAFU_MONTHS = ['睦月', '如月', '弥生', '卯月', '皐月', '水無月', '文月', '葉月', '長月', '神無月', '霜月', '師走'];
 export const wafuMonth = (month) => WAFU_MONTHS[month - 1] || `${month}月`;
+
+// 地図の点に出す、場所の種類のマーク。神社＝shrine（鳥居）・お寺＝temple（卍）・飲食＝food（ナイフとフォーク）・ほか
+const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view' };
+export function markKindOf(spot) {
+  if (!spot) return 'pin';
+  if (KIND_MARK[spot.kind]) return KIND_MARK[spot.kind];
+  const lists = spot.lists || [];
+  const name = spot.name || '';
+  if (/(神社|大社|神宮|宮)$/.test(name) || lists.includes('ichinomiya')) return 'shrine';
+  if (/(寺|院|堂)$/.test(name)) return 'temple';
+  if (/(城|城跡|城址)$/.test(name) || lists.includes('meijo100')) return 'castle';
+  if (/(滝|瀑)$/.test(name) || lists.includes('taki100')) return 'waterfall';
+  if (/(山|岳)$/.test(name) || lists.includes('hyakumeizan')) return 'mountain';
+  if (/灯台/.test(name)) return 'lighthouse';
+  if (/温泉/.test(name)) return 'onsen';
+  if (/(博物館|美術館|資料館|記念館)$/.test(name)) return 'museum';
+  if (lists.includes('meisui')) return 'water';
+  if (spot.kind === 'heritage' || lists.includes('heritage')) return 'heritage';
+  return 'pin';
+}
+
+// 何度も通った・押した場所ほど濃く：1回＝1、2〜3回＝2、4〜9回＝3、10回以上＝4（0回以下は 0）
+export function visitLevel(n) { return !(n > 0) ? 0 : n >= 10 ? 4 : n >= 4 ? 3 : n >= 2 ? 2 : 1; }

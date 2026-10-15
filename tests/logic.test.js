@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
@@ -109,6 +109,23 @@ test('wafuMonth: 和風月名', () => {
   assert.equal(wafuMonth(10), '神無月');
   assert.equal(wafuMonth(12), '師走');
   assert.equal(Array.from({ length: 12 }, (_, i) => wafuMonth(i + 1)).join(''), '睦月如月弥生卯月皐月水無月文月葉月長月神無月霜月師走');
+});
+
+test('markKindOf: 種類ごとのマーク（神社＝鳥居・お寺＝卍・飲食＝ナイフとフォーク）', () => {
+  assert.equal(markKindOf({ kind: 'shrine' }), 'shrine');
+  assert.equal(markKindOf({ kind: 'temple' }), 'temple');
+  for (const k of ['teishoku', 'cafe', 'bakery']) assert.equal(markKindOf({ kind: k }), 'food');
+  assert.equal(markKindOf({ kind: 'sento' }), 'onsen');
+  assert.equal(markKindOf({ kind: 'heritage', name: '慈照寺' }), 'temple');
+  assert.equal(markKindOf({ kind: 'meisho', name: '姫路城' }), 'castle');
+  assert.equal(markKindOf({ kind: 'meisho', name: '華厳滝', lists: ['taki100'] }), 'waterfall');
+  assert.equal(markKindOf({ kind: 'meisho', name: '富士山', lists: ['hyakumeizan'] }), 'mountain');
+  assert.equal(markKindOf({ kind: 'heritage', name: 'ヴェルサイユ宮殿', lists: ['heritage'] }), 'heritage');
+  assert.equal(markKindOf({ kind: 'kanko', name: 'どこか' }), 'pin');
+});
+
+test('visitLevel: 1回・2〜3回・4〜9回・10回以上の4段階', () => {
+  assert.deepEqual([0, 1, 2, 3, 4, 9, 10, 50].map(visitLevel), [0, 1, 2, 2, 3, 3, 4, 4]);
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

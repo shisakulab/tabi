@@ -2,7 +2,7 @@ import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
   todayStr, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
-  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
+  modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
   monthGrid, shiftMonth,
@@ -362,8 +362,17 @@ function passedPos() {
   try { passedPosMap = JSON.parse(localStorage.getItem('tabigoyomi.passedpos') || '{}') || {}; } catch { passedPosMap = {}; }
   return passedPosMap;
 }
+// 通った回数（日を分けて数える）{ spotId: 回数 }。まだ数えていない古い分は1回とみなす
+let passedCntMap = null;
+function passedCnt() {
+  if (passedCntMap) return passedCntMap;
+  try { passedCntMap = JSON.parse(localStorage.getItem('tabigoyomi.passedcnt') || '{}') || {}; } catch { passedCntMap = {}; }
+  return passedCntMap;
+}
+const passCountOf = (id) => (passed()[id] ? Math.max(1, passedCnt()[id] || 0) : 0);
 function savePassed() {
   try {
+    localStorage.setItem('tabigoyomi.passedcnt', JSON.stringify(passedCnt()));
     localStorage.setItem('tabigoyomi.passed', JSON.stringify(passed()));
     localStorage.setItem('tabigoyomi.passedpos', JSON.stringify(passedPos()));
   } catch { /* 保存できなくても続ける */ }
@@ -376,6 +385,8 @@ function markPassed(pos, cands) {
     if (d > 1000) break; // cands は近い順
     if (!canStamp(s, d, state.acc)) continue;
     if (!p[s.id]) changed = true;
+    // 別の日に通ったら1回増やす
+    if (!p[s.id] || todayStr(new Date(p[s.id])) !== todayStr(now())) { passedCnt()[s.id] = passCountOf(s.id) + 1; changed = true; }
     p[s.id] = Date.now();
     passedPos()[s.id] = [s.lat, s.lng];
     const m = markers.get(s.id);
@@ -398,22 +409,57 @@ function latestPhotoForSpot(spotId) {
   }
   return best;
 }
-function hankoIcon(spot) {
+// 種類のマーク（線画。色は文字色＝判子の色に合わせる）。24x24
+const KIND_SVG = (() => {
+  const s = (d) => `<svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  return {
+    shrine: s('M2.5 6.5c3.5 1.5 15.5 1.5 19 0M5 10.5h14M7 7v14M17 7v14M12 8v2.5'),
+    temple: s('M12 3v18M3 12h18M12 3h5M21 12v5M12 21H7M3 12V7'),
+    food: s('M6 3v7M9 3v7M12 3v7M6 10c0 2 1.5 3 3 3s3-1 3-3M9 13v8M18 21V3c-2 1-3.5 4-3.5 8h3.5'),
+    onsen: s('M8 3c-1 1.5 1 2.5 0 4.5M12 3c-1 1.5 1 2.5 0 4.5M16 3c-1 1.5 1 2.5 0 4.5M4 12h16c0 4-2 8-8 8s-8-4-8-8z'),
+    castle: s('M4 20h16M5 20V10h14v10M5 10V6h3v2h2V6h4v2h2V6h3v4M10 20v-4a2 2 0 0 1 4 0v4'),
+    waterfall: s('M5 4h14M8 4v7M12 4v11M16 4v8M5 20c2-2 4-2 7 0s5 2 7 0'),
+    mountain: s('M2.5 20 9 8l4 6 3-4.5 5.5 10.5z'),
+    lighthouse: s('M8 21h8M9.5 21l1-12h3l1 12M10.5 9 12 5l1.5 4M4 6l3.5 1.5M20 6l-3.5 1.5'),
+    museum: s('M3 9l9-5 9 5M5.5 10v8M10 10v8M14 10v8M18.5 10v8M3 20.5h18'),
+    heritage: s('M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c-3.5 3.5-3.5 14.5 0 18M12 3c3.5 3.5 3.5 14.5 0 18'),
+    sight: s('M6 21V4M6 5h11l-2.5 3.5L17 12H6'),
+    view: s('M2.5 18h19M6.5 18a5.5 5.5 0 0 1 11 0M12 6v3M4.5 9 6.5 11M19.5 9 17.5 11'),
+    water: s('M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z'),
+    pin: s('M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11zM12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'),
+  };
+})();
+function kindMark(spot) {
+  const el = h('span', { class: 'kmark' });
+  el.innerHTML = KIND_SVG[markKindOf(spot)] || KIND_SVG.pin;
+  return el;
+}
+// 濃さ（回数の段階）に合わせた色。1回は少し淡く、回数が増えるほど濃く、10回以上は暗めに
+const LEVEL_MIX = [0, 68, 84, 100, 100];
+function levelColor(color, lv) {
+  if (lv >= 4) return `color-mix(in srgb, ${color} 78%, #000)`;
+  return LEVEL_MIX[lv] >= 100 ? color : `color-mix(in srgb, ${color} ${LEVEL_MIX[lv] || 100}%, #fff)`;
+}
+function hankoIcon(spot, far = false) {
   const isSeason = !!spot.seasons;
   const mine = isSeason ? seasonalVisitsOf(spot.id) : visitsOf(spot.id);
   // 季節の名所は、見頃の月だけ赤。見頃でない月にまだ押していなければ灰色（見頃でないのに赤く出ていて紛らわしかった）
   const off = isSeason && !mine.length && !seasonOf(spot, now());
-  const color = off ? OFF_COLOR : stampColor(spot, isSeason);
   const went = !mine.length && !!passed()[spot.id];
-  const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : ''].filter(Boolean).join(' ');
-  const mark = isSeason ? spot.seasons[0].mark : glyphOf(spot.name);
+  // 濃さ：判子の数（押した場所は通った回数も足す）。通っただけなら通った回数
+  const lv = visitLevel(mine.length ? mine.length + passCountOf(spot.id) : went ? passCountOf(spot.id) : 0);
+  const baseColor = off ? OFF_COLOR : stampColor(spot, isSeason);
+  const color = mine.length && lv ? levelColor(baseColor, lv) : baseColor;
+  const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : '', lv ? 'lv' + lv : '', far && !mine.length && !went ? 'far' : ''].filter(Boolean).join(' ');
+  const mark = isSeason ? spot.seasons[0].mark : null;
+  const markEl = () => (isSeason ? h('span', {}, mark) : kindMark(spot));
   // 押した場所に写真が付いていれば、文字の代わりに丸く切り抜いた写真を敷く（枠の色はそのまま残す）
   const photoSeal = mine.length ? latestPhotoForSpot(spot.id) : null;
-  const face = photoSeal ? h('div', { class: 'face photo' }) : h('div', { class: 'face' }, h('span', {}, mark));
+  const face = photoSeal ? h('div', { class: 'face photo' }) : h('div', { class: 'face' }, markEl());
   if (photoSeal) attachPhotoBg(face, photoSeal.photoId);
   const node = mine.length
     ? h('div', { class: cls, style: `--c:${color}` }, face, mine.length >= 2 ? h('span', { class: 'cnt' }, mine.length) : null)
-    : h('div', { class: cls, style: `--c:${color}` }, h('span', { class: 'g' }, mark));
+    : h('div', { class: cls, style: `--c:${color}` }, h('span', { class: 'g' }, markEl()));
   return L.divIcon({ className: 'hanko-wrap', html: node, iconSize: [40, 40], iconAnchor: [20, 20] });
 }
 
@@ -484,7 +530,7 @@ async function drawMap() {
   // とても引いているときは、季節の名所は小さな赤い点にする（大きな判子だと数の丸を隠す）
   const dot = z < 8;
   for (const s of list) {
-    const icon = dot ? L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'sdot' + (visitsOf(s.id).length ? ' got' : '') }), iconSize: [12, 12], iconAnchor: [6, 6] }) : hankoIcon(s);
+    const icon = dot ? L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'sdot' + (visitsOf(s.id).length ? ' got' : '') }), iconSize: [12, 12], iconAnchor: [6, 6] }) : hankoIcon(s, z < MIN_ZOOM_ALL);
     const m = L.marker([s.lat, s.lng], { icon, title: s.name }).on('click', () => showCard(s));
     m.addTo(layer);
     markers.set(s.id, m);
@@ -497,7 +543,7 @@ async function drawMap() {
       // 数が多いほど大きく（押した丸と同じ升に重なっても、外側に輪がのぞくように）
       const size = g.n > 1 ? Math.min(34, Math.round(20 + 3 * Math.log2(g.n))) : 12;
       L.marker([g.lat, g.lng], {
-        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mypass', style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mypass lv' + visitLevel(g.cnt), style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
         title: g.n > 1 ? `通った ${g.n} か所` : `${g.name}（通った）`, zIndexOffset: 500,
       }).on('click', () => mainMap.setView([g.lat, g.lng], Math.min(z + 3, MIN_ZOOM_ALL), { animate: !reduceMotion() }))
         .addTo(layer);
@@ -505,7 +551,7 @@ async function drawMap() {
     for (const g of myStampGroups(b, z, shown)) {
       const size = g.n > 1 ? 22 : 16;
       L.marker([g.lat, g.lng], {
-        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mydot', style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
+        icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mydot lv' + visitLevel(g.cnt), style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
         title: g.n > 1 ? `判子 ${g.n} か所` : g.name, zIndexOffset: 1000,
       }).on('click', () => (g.n === 1 && g.spot ? showCard(g.spot) : mainMap.setView([g.lat, g.lng], Math.min(z + 3, MIN_ZOOM_ALL), { animate: !reduceMotion() })))
         .addTo(layer);
@@ -523,7 +569,7 @@ function myStampGroups(b, z, skip) {
     const lat = spot && Number.isFinite(spot.lat) ? spot.lat : v.lat;
     const lng = spot && Number.isFinite(spot.lng) ? spot.lng : v.lng;
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !b.pad(0.1).contains([lat, lng])) continue;
-    bySpot.set(v.spotId, { spot, lat, lng });
+    bySpot.set(v.spotId, { spot, lat, lng, cnt: visitsOf(v.spotId).length + passCountOf(v.spotId) });
   }
   return cellGroups(bySpot, z);
 }
@@ -538,7 +584,7 @@ function myPassedGroups(b, z, skip) {
     const spot = spotById(id);
     const ll = pp[id] || (spot && Number.isFinite(spot.lat) ? [spot.lat, spot.lng] : null);
     if (!ll || !b.pad(0.1).contains(ll)) continue;
-    bySpot.set(id, { spot, lat: ll[0], lng: ll[1] });
+    bySpot.set(id, { spot, lat: ll[0], lng: ll[1], cnt: passCountOf(id) });
   }
   return cellGroups(bySpot, z);
 }
@@ -548,8 +594,8 @@ function cellGroups(bySpot, z) {
   for (const [id, it] of bySpot) {
     const p = mainMap.project([it.lat, it.lng], z);
     const ck = `${Math.floor(p.x / 18)}_${Math.floor(p.y / 18)}`;
-    const c = cells.get(ck) || { n: 0, lat: 0, lng: 0, spot: null, name: '', color: '' };
-    c.n++; c.lat += it.lat; c.lng += it.lng;
+    const c = cells.get(ck) || { n: 0, cnt: 0, lat: 0, lng: 0, spot: null, name: '', color: '' };
+    c.n++; c.lat += it.lat; c.lng += it.lng; c.cnt += it.cnt || 1;
     if (!c.spot) { c.spot = it.spot; c.name = it.spot ? it.spot.name : id; c.color = it.spot ? stampColor(it.spot, !!it.spot.seasons) : TIER_COLOR.near; }
     cells.set(ck, c);
   }

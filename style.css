@@ -99,14 +99,27 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 /* 通った（範囲に入ったが押していない）：点線を実線にして薄く色をつける */
 .hanko.empty.passed { border-style: solid; background: color-mix(in srgb, var(--c) 18%, #fff); }
 .hanko.empty.passed .g { opacity: 1; }
+/* 種類のマーク（鳥居・卍・ナイフとフォークなど。線画なので色は文字色） */
+.kmark { display: block; width: 24px; height: 24px; line-height: 0; }
+.hanko.empty .kmark { width: 18px; height: 18px; }
+.hanko.near.empty .kmark { width: 16px; height: 16px; }
+.hanko.season .kmark { width: 20px; height: 20px; }
+/* 通っただけの場所：通った回数が多いほど、色の面が濃く（1回／2〜3回／4〜9回／10回以上） */
+.hanko.empty.passed.lv1 { background: color-mix(in srgb, var(--c) 14%, #fff); }
+.hanko.empty.passed.lv2 { background: color-mix(in srgb, var(--c) 26%, #fff); }
+.hanko.empty.passed.lv3 { background: color-mix(in srgb, var(--c) 42%, #fff); border-width: 2.5px; }
+.hanko.empty.passed.lv4 { background: color-mix(in srgb, var(--c) 60%, #fff); border-width: 3px; }
+.hanko.empty.passed.lv3 .g, .hanko.empty.passed.lv4 .g { color: color-mix(in srgb, var(--c) 80%, #000); }
+/* 引いた地図（ズーム10未満）で、まだ押していない・通っていない点は薄く控えめに */
+.hanko.empty.far { opacity: .5; transform: scale(.78); }
 /* まとめの丸（地図を引いたとき） */
 .group {
-  display: grid; place-items: center; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--ink2) 55%, transparent); background: rgba(255,255,255,.45);
-  font: 700 11px var(--serif); color: var(--ink2);
+  display: grid; place-items: center; border-radius: 50%; border: 1px dashed color-mix(in srgb, var(--ink2) 38%, transparent); background: rgba(255,255,255,.28);
+  font: 700 11px var(--serif); color: color-mix(in srgb, var(--ink2) 72%, transparent);
 }
 /* 引いた地図の季節の名所：まだは点線の白抜き、押したら塗る（凡例の「点線＝まだ・塗り＝押した」に合わせる） */
-.sdot { width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px dotted var(--seal); box-sizing: border-box; }
-.sdot.got { background: var(--seal); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--seal); }
+.sdot { width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px dotted var(--seal); box-sizing: border-box; opacity: .55; }
+.sdot.got { background: var(--seal); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--seal); opacity: 1; }
 /* 引いた地図の、通っただけの場所（白抜きの輪。凡例の「通った＝実線の枠」） */
 .mypass {
   display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,.9); border: 2.5px solid var(--c); box-sizing: border-box;
@@ -117,6 +130,14 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
   display: grid; place-items: center; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-sizing: border-box;
   box-shadow: 0 1px 3px rgba(0,0,0,.35); font: 700 10px system-ui, sans-serif; color: #fff;
 }
+/* 引いた地図の丸も、回数が多いほど濃く（押した丸は塗り、通った輪は縁と地） */
+.mydot.lv1 { background: color-mix(in srgb, var(--c) 70%, #fff); }
+.mydot.lv2 { background: color-mix(in srgb, var(--c) 86%, #fff); }
+.mydot.lv4 { background: color-mix(in srgb, var(--c) 78%, #000); }
+.mypass { border-width: 2px; border-color: color-mix(in srgb, var(--c) 60%, #fff); background: rgba(255,255,255,.8); }
+.mypass.lv2 { border-color: color-mix(in srgb, var(--c) 78%, #fff); }
+.mypass.lv3 { border-color: var(--c); border-width: 2.5px; background: color-mix(in srgb, var(--c) 14%, #fff); }
+.mypass.lv4 { border-color: color-mix(in srgb, var(--c) 80%, #000); border-width: 3px; background: color-mix(in srgb, var(--c) 28%, #fff); }
 /* 判子の色の見方（左下） */
 .legend {
   position: fixed; left: 8px; bottom: calc(var(--safe-b) + 34px); z-index: 450; display: grid; gap: 2px;
