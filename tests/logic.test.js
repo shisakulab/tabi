@@ -6,6 +6,7 @@ import {
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
+import { dataURLToBlob } from '../db.js';
 import seasons from '../themes/seasons.js';
 
 const at = (m, lat = 35, lng = 135) => ({ lat: lat + m / 111195, lng }); // 北へ m メートル
@@ -78,6 +79,15 @@ test('monthlyQuests: 旅のしかたの範囲の外は出さない', () => {
   assert.deepEqual(ids('bike'), ['near']);
   assert.deepEqual(ids('trip'), ['near', 'mid', 'far']);
   assert.deepEqual(ids('walk'), []);
+});
+
+test('dataURLToBlob: data URL から元のバイト列に戻る（大きくても）', async () => {
+  const bytes = new Uint8Array(300000).map((_, i) => (i * 7) % 256);
+  const url = 'data:image/jpeg;base64,' + Buffer.from(bytes).toString('base64');
+  const b = dataURLToBlob(url);
+  assert.equal(b.type, 'image/jpeg');
+  assert.deepEqual(new Uint8Array(await b.arrayBuffer()), bytes);
+  assert.throws(() => dataURLToBlob('abc'));
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {

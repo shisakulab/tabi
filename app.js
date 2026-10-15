@@ -1975,12 +1975,12 @@ async function importData(e) {
   const f = e.target.files[0];
   if (!f) return;
   try {
-    await db.importAll(JSON.parse(await f.text()));
+    const r = await db.importAll(JSON.parse(await f.text()));
     dropPhotoCache();
     await loadData();
     await loadDist();
     render();
-    toast('読み込みました');
+    toast(r && r.skippedPhotos ? `読み込みました（写真 ${r.skippedPhotos} 枚は読み込めませんでした）` : '読み込みました');
   } catch (err) { toast('読み込めませんでした：' + (err && err.message ? err.message : err)); }
 }
 async function wipe() {

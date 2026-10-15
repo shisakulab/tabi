@@ -55,7 +55,16 @@ const blobToDataURL = (blob) => new Promise((resolve, reject) => {
   r.readAsDataURL(blob);
 });
 
-const dataURLToBlob = async (url) => (await fetch(url)).blob();
+// fetch(data URL) は Safari で大きいと失敗することがあるので、自分で base64 を戻す
+export function dataURLToBlob(url) {
+  const i = url.indexOf(',');
+  if (i < 0) throw new Error('data URL ではありません');
+  const type = (url.slice(5, i).split(';')[0]) || 'application/octet-stream';
+  const bin = atob(url.slice(i + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+  return new Blob([bytes], { type });
+}
 
 // 写真を base64 で含めた1つの JSON
 export async function exportAll() {
@@ -84,11 +93,16 @@ export async function importAll(json) {
     }
     await setSetting('dist', cur);
   }
+  // 写真は1枚ずつ。失敗した写真は飛ばして続け、飛ばした数を返す
+  let skipped = 0;
   for (const p of json.photos || []) {
     // 画像の data URL だけを受け付ける（それ以外の URL を読みに行かない）
-    if (typeof p.data !== 'string' || !/^data:image\/(jpeg|png|webp|gif);base64,/.test(p.data)) continue;
-    await put('photos', { id: p.id, blob: await dataURLToBlob(p.data) });
+    if (!p || typeof p.data !== 'string' || !/^data:image\/(jpeg|png|webp|gif);base64,/.test(p.data)) continue;
+    try {
+      await put('photos', { id: p.id, blob: dataURLToBlob(p.data) });
+    } catch { skipped++; }
   }
+  return { skippedPhotos: skipped };
 }
 
 export async function clearAll() {
