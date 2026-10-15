@@ -341,14 +341,14 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .calhead h3 { font-size: 17px; }
 .calpick { flex: 1; min-height: 44px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); color: var(--ink); font: 700 17px var(--serif); }
 .pickpanel { margin: 0 0 10px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
-.pickyears { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
-.pickyear { flex: none; min-height: 36px; padding: 0 14px; border: 1px solid var(--line); border-radius: 18px; background: transparent; color: var(--ink); }
-.pickyear.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.pickmonths { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.pickmonth { position: relative; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink2); }
-.pickmonth.has { color: var(--ink); font-weight: 700; }
-.pickmonth.has::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--seal); }
-.pickmonth.cur { border-color: var(--accent); border-width: 2px; }
+.drums { position: relative; display: flex; gap: 8px; height: 200px; }
+.drum { flex: 1; overflow-y: auto; scroll-snap-type: y mandatory; overscroll-behavior: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent); -webkit-mask-image: linear-gradient(to bottom, transparent, #000 30%, #000 70%, transparent); }
+.drum::-webkit-scrollbar { display: none; }
+.drumpad { height: 80px; }
+.drumitem { position: relative; height: 40px; scroll-snap-align: center; display: flex; align-items: center; justify-content: center; font: 500 19px var(--serif); color: var(--ink2); cursor: pointer; }
+.drumitem.sel { color: var(--ink); font-weight: 700; }
+.drumitem.has::after { content: ''; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--seal); }
+.drumband { position: absolute; left: 0; right: 0; top: 80px; height: 40px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 6%, transparent); border-radius: 8px; pointer-events: none; }
 .calwd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 4px; text-align: center; font-size: 12px; color: var(--ink2); }
 .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .calday {

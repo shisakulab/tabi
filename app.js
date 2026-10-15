@@ -1862,23 +1862,51 @@ function modeMarks(modes) {
   el.innerHTML = modes.slice(0, 3).map((m) => `<i title="${MODES[m].label}">${MODE_MARK[m]}</i>`).join('');
   return el;
 }
-// 年と月を選んで一気に飛ぶ：年の一覧（記録がある最初の年〜今年）と12か月のマス。記録がある月には印
+// 年と月を選んで一気に飛ぶ：iOS の日付選びのようなドラム（年・月の2列を縦にスクロール、scroll-snap で止まった位置が選ばれる）。
+// 開いたときは今カレンダーで見ている年月が真ん中。記録がある年・月には点。「決定」か、選ばれている行をもう一度タップで飛ぶ
+const DRUM_ROW = 40;
 function diaryPickerEl(byDate, curYear, curMonth) {
   const thisYear = now().getFullYear();
   const { months, years } = diaryRange([...byDate.keys()], thisYear);
   if (!years.includes(curYear)) years.push(curYear);
   years.sort((a, b) => a - b);
-  const py = diaryPick.year;
-  return h('div', { class: 'pickpanel' },
-    h('div', { class: 'pickyears' }, years.map((y) => h('button', {
-      class: 'pickyear' + (y === py ? ' on' : ''), type: 'button', 'data-year': y,
-      onclick: () => { diaryPick = { year: y }; openDiary(); },
-    }, `${y}`))),
-    h('div', { class: 'pickmonths' }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) => h('button', {
-      class: 'pickmonth' + (months.has(`${py}-${String(m).padStart(2, '0')}`) ? ' has' : '') + (py === curYear && m === curMonth ? ' cur' : ''),
-      type: 'button', 'data-month': m,
-      onclick: () => { diaryYM = { year: py, month: m }; diaryPick = null; openDiary(); },
-    }, `${m}月`))));
+  const sel = { year: curYear, month: curMonth };
+  const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+  const hasYear = (y) => [...months].some((k) => k.startsWith(`${y}-`));
+  const yearItems = years.map((y) => h('div', { class: 'drumitem' + (hasYear(y) ? ' has' : ''), 'data-v': y }, `${y}年`));
+  const monthItems = Array.from({ length: 12 }, (_, i) => i + 1).map((m) => h('div', { class: 'drumitem', 'data-v': m }, `${m}月`));
+  const markMonths = () => monthItems.forEach((el, i) => el.classList.toggle('has', months.has(ym(sel.year, i + 1))));
+  const go = () => { diaryYM = { year: sel.year, month: sel.month }; diaryPick = null; openDiary(); };
+  const drum = (items, values, key, label) => {
+    const col = h('div', { class: 'drum', role: 'listbox', 'aria-label': label, tabindex: '0' }, h('div', { class: 'drumpad' }), ...items, h('div', { class: 'drumpad' }));
+    const idxOf = () => Math.max(0, Math.min(values.length - 1, Math.round(col.scrollTop / DRUM_ROW)));
+    const paint = () => items.forEach((el, i) => el.classList.toggle('sel', values[i] === sel[key]));
+    let timer = 0;
+    col.addEventListener('scroll', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const v = values[idxOf()];
+        if (v !== sel[key]) { sel[key] = v; paint(); if (key === 'year') markMonths(); }
+      }, 90);
+    });
+    items.forEach((el, i) => el.addEventListener('click', () => {
+      if (values[i] === sel[key] && Math.abs(col.scrollTop - i * DRUM_ROW) < 4) { go(); return; }
+      col.scrollTo({ top: i * DRUM_ROW, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    }));
+    col.start = () => { col.scrollTop = values.indexOf(sel[key]) * DRUM_ROW; paint(); };
+    return col;
+  };
+  const yc = drum(yearItems, years, 'year', '年');
+  const mc = drum(monthItems, Array.from({ length: 12 }, (_, i) => i + 1), 'month', '月');
+  markMonths();
+  const panel = h('div', { class: 'pickpanel' },
+    h('div', { class: 'drums' }, yc, mc, h('div', { class: 'drumband', 'aria-hidden': 'true' })),
+    h('div', { style: 'display:flex;gap:8px;margin-top:8px' },
+      h('button', { class: 'btn', type: 'button', onclick: () => { diaryPick = null; openDiary(); } }, 'やめる'),
+      h('button', { class: 'btn primary', type: 'button', style: 'flex:1', onclick: go }, '決定')));
+  // 画面に付いてから、いまの年月へ（付く前は scrollTop が効かない）
+  requestAnimationFrame(() => requestAnimationFrame(() => { yc.start(); mc.start(); }));
+  return panel;
 }
 function diaryCalendarNodes() {
   const { year, month } = diaryYM;
