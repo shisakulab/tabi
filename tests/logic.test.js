@@ -7,6 +7,8 @@ import {
   readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
+import { readFileSync } from 'node:fs';
+import { CLOSED_SPOTS, dropClosed } from '../tools/build-spots.mjs';
 import seasons from '../themes/seasons.js';
 
 const at = (m, lat = 35, lng = 135) => ({ lat: lat + m / 111195, lng }); // 北へ m メートル
@@ -126,6 +128,14 @@ test('markKindOf: 種類ごとのマーク（神社＝鳥居・お寺＝卍・�
 
 test('visitLevel: 1回・2〜3回・4〜9回・10回以上の4段階', () => {
   assert.deepEqual([0, 1, 2, 3, 4, 9, 10, 50].map(visitLevel), [0, 1, 2, 2, 3, 3, 4, 4]);
+});
+
+test('もう無い催し・施設は一覧から外れ、座標なしの観光地は残る', () => {
+  assert.ok(CLOSED_SPOTS.has('Q283773')); // Pokémon The Park 2005
+  assert.deepEqual(dropClosed([{ id: 'Q283773' }, { id: 'Q57965' }, { id: 'QX', lat: null }]).map((i) => i.id), ['Q57965', 'QX']);
+  const kanko = JSON.parse(readFileSync(new URL('../data/lists.json', import.meta.url), 'utf8')).lists.find((l) => l.key === 'kanko');
+  assert.ok(!kanko.items.some((it) => CLOSED_SPOTS.has(it[0])));
+  assert.equal(kanko.items.filter((it) => !it[3]).length, 293 - 8); // 座標なし：293 のうち、閉園などで外した8件を除く（残り285件）
 });
 
 test('formatBestMonths: 連続は〜でまとめる、年をまたぐ分も1つに', () => {
