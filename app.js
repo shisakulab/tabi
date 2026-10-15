@@ -1059,6 +1059,36 @@ function modeSub(k) {
 // 見頃の名所（月のお題）に、散歩・サイクリングなら近所の「今日のお題」を足して最大5件
 const QUEST_MAX = 5;
 const sameDay = (v, d) => new Date(v.at).toDateString() === d.toDateString();
+// 別のお題：今の旅のしかた・範囲・種類分けのまま、今のお題（今日押したものは残す）以外から選び直す。結果はその日の間は固定（保存は通常のお題と同じ）
+function rerollQuests() {
+  const d = now();
+  if (!state.pos || !DAILY_MODES.includes(state.mode)) return;
+  const key = LS + 'daily.' + state.mode + '.' + loopMinutes();
+  const dayKey = d.toDateString();
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* 読めなければ空 */ }
+  if (!saved || saved.day !== dayKey || saved.mode !== state.mode || !Array.isArray(saved.items)) saved = { day: dayKey, mode: state.mode, items: [] };
+  const monthly = monthlyQuests(state.seasonSpots, d, state.mode, state.pos);
+  const today = new Set(); const before = new Set();
+  for (const v of state.visits) (sameDay(v, d) ? today : before).add(v.spotId);
+  const want = Math.min(3, QUEST_MAX - monthly.length);
+  const stamped = saved.items.filter((it) => today.has(it.id)); // 今日押したお題は残す
+  const need = want - stamped.length;
+  if (need <= 0) { toast('今日のお題はもう全部押しました'); return; }
+  const used = new Set([...monthly.map((s) => s.id), ...stamped.map((it) => it.id)]);
+  const avoid = new Set([...used, ...saved.items.map((it) => it.id), ...(saved.avoid || [])]);
+  const salt = String((saved.salt || 0) + 1);
+  const pool = allLoaded().filter((s) => !used.has(s.id) && s.kind !== 'foodshop');
+  const add = dailyQuests(pool, d, state.mode, state.pos, today, before, need, loopMinutes(), salt, avoid);
+  if (!add.length) { toast('ほかの候補はありません'); return; }
+  let items = [...stamped, ...add.map((s) => ({ id: s.id, lat: s.lat, lng: s.lng }))];
+  let loop = 0;
+  if (LOOP_TARGET[state.mode] && items.length) { const r = bestLoop(state.pos, items); items = r.order; loop = r.meters; }
+  // 直前のお題は、次の選び直しでもなるべく出さない（avoid に積む。多くなりすぎないよう直近だけ）
+  const prevAvoid = [...(saved.avoid || []), ...saved.items.map((it) => it.id)].slice(-30);
+  try { localStorage.setItem(key, JSON.stringify({ day: dayKey, mode: state.mode, items, loop, salt: Number(salt), avoid: prevAvoid })); } catch { /* 保存できなくても続ける */ }
+  drawQuest(); if (!sheetEl.hidden) openQuests();
+}
 function currentQuests() {
   const d = now();
   const monthly = monthlyQuests(state.seasonSpots, d, state.mode, state.pos);
@@ -1124,7 +1154,8 @@ function drawQuest() {
     h('div', { class: 'qtop' },
       h('b', { class: 'qtitle' }, questTitle()),
       h('span', { class: 'muted' }, state.dailyLoop ? `回って戻ると${loopText(state.dailyLoop).split('・')[0]}` : qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
-      qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null),
+      qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null,
+      state.pos && DAILY_MODES.includes(state.mode) ? h('button', { class: 'qreroll', type: 'button', 'aria-label': '別のお題', title: '別のお題', onclick: (e) => { e.stopPropagation(); rerollQuests(); } }, '🎲') : null),
     qs.length
       // 枠を押すとお題の一覧、1つの場所の札を押すとその場所のカード（お題の枠はボタンなので、札は div で受けて一覧を開かないようにする）
       ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : ''), role: 'button', tabindex: '0', 'aria-label': `${s.name}を地図で見る`,
@@ -1150,6 +1181,7 @@ function openQuests() {
           h('div', { class: 'n' }, [s.pref, s.distance !== null ? fmtDist(s.distance) : ''].filter(Boolean).join('・')),
           s.note ? h('div', { class: 'n', style: 'white-space:normal' }, s.note) : null))))),
     qs.length ? null : h('p', { class: 'muted' }, '今月が見頃の名所は、まだ登録がありません。'),
+    state.pos && DAILY_MODES.includes(state.mode) ? h('button', { class: 'btn', type: 'button', style: 'margin-top:10px', onclick: rerollQuests }, '🎲 別のお題（今日押した分は残します）') : null,
   ]);
 }
 

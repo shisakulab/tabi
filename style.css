@@ -432,3 +432,4 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .vcap a { color: #9fd3de; }
 .vbtns { display: flex; gap: 8px; margin-top: 8px; }
 .vbtns .btn { flex: 1; background: rgba(255, 255, 255, .14); color: #fff; border-color: rgba(255, 255, 255, .5); }
+.qreroll { border: 0; background: transparent; font-size: 18px; line-height: 1; padding: 4px; min-height: 0; cursor: pointer; }

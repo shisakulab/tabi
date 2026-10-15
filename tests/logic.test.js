@@ -800,3 +800,17 @@ test('data: 世界遺産の名前はほぼ日本語、元の名前は names-en.j
   for (let k = 0; k < 16; k++) for (const v of Object.values(read(`photos/${k}.json`))) if (v[3]) { desc++; if (!hasJa(v[3])) en++; }
   assert.ok(desc > 9000 && en / desc < 0.02, '英語の説明 ' + en);
 });
+
+test("dailyQuests: salt で選び直し、avoid の場所は出さない", () => {
+  const pos = { lat: 35, lng: 135 };
+  const spots = [];
+  for (let i = 0; i < 40; i++) spots.push({ id: "s" + i, kind: ["cafe", "shrine", "museum"][i % 3], name: "n" + i, lat: 35 + (i % 8) * 0.0008, lng: 135 + Math.floor(i / 8) * 0.0008 });
+  const d = new Date(2026, 9, 15, 12);
+  const a = dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3);
+  const ids = new Set(a.map((s) => s.id));
+  const b = dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3, 30, "1", ids);
+  assert.ok(a.length >= 2 && b.length >= 2);
+  assert.ok(b.every((s) => !ids.has(s.id)), "前のお題は出さない");
+  assert.deepEqual(dailyQuests(spots, d, "walk", pos, new Set(), new Set(), 3, 30, "1", ids).map((s) => s.id), b.map((s) => s.id));
+  assert.deepEqual(dailyQuests(spots.slice(0, 3), d, "walk", pos, new Set(), new Set(), 3, 30, "1", new Set(spots.slice(0, 3).map((s) => s.id))), []);
+});

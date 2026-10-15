@@ -196,16 +196,18 @@ export function monthlyQuests(spots, date, mode, pos, limit = 5) {
 // stampedToday：今日判子を押した id（押した印を付けて残す）、stampedBefore：前に押した id（出さない）
 export const DAILY_MODES = ['walk', 'bike'];
 // minutes：回って戻る時間（設定の 15・30・60 分）
-export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore, limit = 3, minutes = LOOP_MINUTES) {
+// salt：選び直し（別のお題）の回数。日付に足して並びを変える。avoid：選び直す前のお題の id（なるべく出さない）
+export function dailyQuests(spots, date, mode, pos, stampedToday, stampedBefore, limit = 3, minutes = LOOP_MINUTES, salt = '', avoid = null) {
   if (!pos || !DAILY_MODES.includes(mode) || limit <= 0) return [];
   const range = MODES[mode].range;
-  const day = typeof date === 'string' ? date.slice(0, 10)
+  let day = typeof date === 'string' ? date.slice(0, 10)
     : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  if (salt) day += `#${salt}`;
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
   const seen = new Set();
   const cands = spots
     .filter((s) => {
-      if (seen.has(s.id) || !Number.isFinite(s.lat) || !Number.isFinite(s.lng) || Array.isArray(s.seasons)) return false;
+      if (seen.has(s.id) || !Number.isFinite(s.lat) || !Number.isFinite(s.lng) || Array.isArray(s.seasons) || (avoid && avoid.has(s.id))) return false;
       seen.add(s.id);
       return !stampedBefore.has(s.id) || stampedToday.has(s.id);
     })
