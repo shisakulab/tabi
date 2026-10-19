@@ -8,7 +8,7 @@
 - `seasons-coords.json`：季節の名所（`themes/seasons.js`）の座標。名前で Wikidata を検索し、都道府県が合う候補だけを採用（合わなければ入れない）
 - `climate.json`：`node tools/build-climate.mjs` で作ります（手で編集しない）。世界遺産の座標を1度格子にまとめ、格子ごとに `{ best: [ベストの月...], t: [12か月の最高気温の平均(℃)], r: [12か月の降水量の平均(mm)] }`。`spots` は世界遺産の id → 格子キーの対応
 
-一覧（Wikidata）：世界遺産（日本。P757 かつ P17=Q17、radius 500）、重伝建（P1435=Q850649、radius 300）、日本100名城（P361=Q1139439、radius 300）、続日本100名城（P361=Q30927700、radius 300）、名水百選（P361=Q10917783、radius 50）、日本の滝百選（P361=Q40172600、radius 150）
+一覧（Wikidata）：世界遺産（日本。P757 かつ P17=Q17、radius 500）、重伝建（P1435=Q850649、radius 300）、日本100名城（P361=Q1139439、radius 300）、続日本100名城（P361=Q30927700、radius 300）、名水百選（昭和）・平成の名水百選・続日本100名城・日本の滝百選は、Wikidata の「〜の一部」では取りこぼす（続100名城71・滝59）ので、日本語版 Wikipedia の一覧の表（番号つき）から項目の順と名前を取り、記事 → Wikidata の項目 → 座標（P625）を引く（tools/wiki-list.mjs。記事のない平成の名水は位置なし）
 
 近所の場所（OSM。Overpass は混んで取れないことが多いので、`tools/osm-extract.py` で Geofabrik の地方ごとのファイルから tools/.cache に作ってから build する。`--no-osm` を付けると入れずに作る）：神社・お寺（amenity=place_of_worship＋religion=shinto/buddhist）、温泉（natural=hot_spring、または amenity=public_bath で bath:type=onsen か名前に「温泉」）、銭湯（それ以外の amenity=public_bath。足湯・私有は除く）、灯台（man_made=lighthouse）、博物館・記念館（tourism=museum）、名所（tourism=attraction、または historic=castle/ruins/monument。historic=memorial は小さな碑が多すぎるので除く）、展望（tourism=viewpoint）、パン屋（shop=bakery）、喫茶店（amenity=cafe。brand・brand:wikidata タグのあるチェーン店は除く）、定食屋（amenity=restaurant/fast_food のうち、名前に「食堂」「定食」などを含むか cuisine に teishoku/set_meal を含むもの。brand・brand:wikidata タグのあるもの、チェーン店名、社員食堂・学食などの名前、支店名だけのものは除く）。node・way だけでなく relation（境内などの複数の囲み）も、メンバー way の点の範囲の中心で入れる。名前のないものは入れない
 

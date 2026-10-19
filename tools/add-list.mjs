@@ -2,7 +2,7 @@
 // （全一覧を作り直すのは重いので、新しい一覧を1つ足すときはこちらを使う。取り方は build-spots.mjs と同じ関数を使うので、
 //  いつか --refresh で全部作り直しても同じ結果になる）
 //   node tools/add-list.mjs hyakumeizan
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tileKey } from '../logic.js';
@@ -32,7 +32,7 @@ async function main() {
   const existingIdx = listsData.lists.findIndex((l) => l.key === list.key);
   if (existingIdx >= 0) listsData.lists[existingIdx] = entry;
   else {
-    const afterIdx = listsData.lists.findIndex((l) => l.key === 'zokumeijo');
+    const afterIdx = listsData.lists.findIndex((l) => l.key === (list.after || 'zokumeijo'));
     listsData.lists.splice(afterIdx >= 0 ? afterIdx + 1 : listsData.lists.length, 0, entry);
   }
   await writeFile(listsPath, JSON.stringify(listsData));
@@ -47,6 +47,19 @@ async function main() {
     const arr = JSON.parse(await readFile(path.join(spotsDir, f), 'utf8'));
     tiles.set(tk, arr);
     for (const s of arr) byId.set(s[0], tk);
+  }
+  // 作り直す一覧は、前の項目から一覧の印（lists の key）を外す。その一覧だけでできていた場所（kind が key で、他の一覧に入っていないもの）は消す
+  let removed = 0;
+  for (const [tk, arr] of tiles) {
+    const keep = [];
+    for (const s of arr) {
+      if (!s[7].includes(list.key)) { keep.push(s); continue; }
+      s[7] = s[7].filter((k) => k !== list.key);
+      if (s[1] === list.key && !s[7].length && s[5] === 'list') { removed++; byId.delete(s[0]); continue; }
+      if (s[1] === list.key && s[7].length) s[1] = s[7][0]; // 種類は残った一覧の1つめに
+      keep.push(s);
+    }
+    tiles.set(tk, keep);
   }
   let added = 0, merged = 0;
   for (const it of items) {
@@ -65,7 +78,7 @@ async function main() {
     byId.set(it.id, tk);
     added++;
   }
-  for (const [tk, arr] of tiles) await writeFile(path.join(spotsDir, `${tk}.json`), JSON.stringify(arr));
+  for (const [tk, arr] of tiles) { const f = path.join(spotsDir, `${tk}.json`); if (arr.length) await writeFile(f, JSON.stringify(arr)); else await rm(f, { force: true }); }
 
   // meta.json：件数・区画一覧・tileCounts・counts を更新
   const metaPath = path.join(spotsDir, 'meta.json');
@@ -77,6 +90,6 @@ async function main() {
   meta.tileCounts = Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]]));
   await writeFile(metaPath, JSON.stringify(meta));
 
-  console.log(`新規の場所 ${added} 件、既存の場所に合流 ${merged} 件`);
+  console.log(`新規の場所 ${added} 件、既存の場所に合流 ${merged} 件、前の項目を外した ${removed} 件`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

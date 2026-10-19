@@ -9,6 +9,7 @@ import path from 'node:path';
 import { tileKey, distanceMeters } from '../logic.js';
 import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
 import { worldNearRows } from './build-world-near.mjs';
+import { fetchWikiList } from './wiki-list.mjs';
 const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,12 +86,14 @@ export const LISTS = [
   { key: 'heritage', name: '世界遺産', note: '世界遺産の構成資産', radius: 500, global: true, cond: '?s wdt:P757 [] .' },
   { key: 'judenken', name: '重伝建', note: '重要伝統的建造物群保存地区', radius: 300, cond: '?s wdt:P1435 wd:Q850649 .' },
   { key: 'meijo100', name: '日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q1139439 .' },
-  { key: 'zokumeijo', name: '続日本100名城', note: '日本城郭協会選定', radius: 300, cond: '?s wdt:P361 wd:Q30927700 .' },
+  // 続日本100名城・日本の滝百選・名水百選は、Wikidata の「〜の一部」では取りこぼす（続100名城71・滝59）ので、日本語版 Wikipedia の一覧の表（番号つき）から作る（tools/wiki-list.mjs）
+  { key: 'zokumeijo', name: '続日本100名城', note: '日本城郭協会選定（2017年）', radius: 300, wiki: { page: '続日本100名城', lo: 101, hi: 200 } },
   // 深田久弥『日本百名山』(Q1156761)。八経ヶ岳(Q11391726)は大峰山の最高峰で別立てされているが、
   // 深田の選には大峰山として入っているので除く（これを除くとちょうど100件になる）
   { key: 'hyakumeizan', name: '日本百名山', note: '深田久弥『日本百名山』の100座。山頂（半径500m）で判子', radius: 500, cond: '?s wdt:P361 wd:Q1156761 . FILTER (?s != wd:Q11391726)' },
-  { key: 'meisui', name: '名水百選', note: '環境省選定', radius: 50, cond: '?s wdt:P361 wd:Q10917783 .' },
-  { key: 'taki100', name: '日本の滝百選', note: '1990年選定', radius: 150, cond: '?s wdt:P361 wd:Q40172600 .' },
+  { key: 'meisui', name: '名水百選（昭和）', note: '環境庁選定（1985年）', radius: 50, wiki: { page: '名水百選', lo: 1, hi: 100 } },
+  { key: 'heisei', after: 'meisui', name: '平成の名水百選', note: '環境省選定（2008年）。記事のない名水は位置が分からないので地図には出ません', radius: 50, wiki: { page: '平成の名水百選', lo: 1, hi: 100 } },
+  { key: 'taki100', name: '日本の滝百選', note: '1990年選定', radius: 150, wiki: { page: '日本の滝百選', lo: 1, hi: 100 } },
   // 国宝は美術工芸品も含む。美術品は所蔵館の位置で登録されていて1か所に何十件も重なるので、
   // 所蔵（P195）があるものと、所在地（P276）が博物館のものを除く（残りはほぼ建造物）
   { key: 'kokuho', name: '国宝', note: '国宝の建造物（同じ寺社・城の建物は1つにまとめる）', radius: 150,
@@ -341,6 +344,7 @@ async function fetchGlobalList(list) {
 // 1つの一覧を取る：[{ id, name, lat, lng, pref, country }]（id 重複は1つに）。日本の一覧は country を固定で '日本' にする
 export async function fetchList(list, gsiCache) {
   if (list.global) return fetchGlobalList(list);
+  if (list.wiki) return fetchWikiList(list, { cacheDir: CACHE, refresh, sparql: (q, name) => sparql(q, name), gsiPref: (id, lat, lng) => gsiPrefFor(id, lat, lng, gsiCache) });
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }
     OPTIONAL { ?s rdfs:label ?l FILTER(LANG(?l) = "ja") } }`, `${list.key}-base`);

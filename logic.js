@@ -872,7 +872,7 @@ export function markKindOf(spot) {
   if (/灯台/.test(name)) return 'lighthouse';
   if (/温泉/.test(name)) return 'onsen';
   if (/(博物館|美術館|資料館|記念館)$/.test(name)) return 'museum';
-  if (lists.includes('meisui')) return 'water';
+  if (lists.includes('meisui') || lists.includes('heisei')) return 'water';
   if (spot.kind === 'heritage' || lists.includes('heritage')) return 'heritage';
   return 'pin';
 }

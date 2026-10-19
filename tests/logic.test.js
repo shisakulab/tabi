@@ -909,3 +909,17 @@ test("data/spots: 海外の近所の場所（100都市）は日本語名つき�
   for (const k of ["church", "mosque", "synagogue", "museum", "viewpoint", "sight", "bakery", "cafe"]) assert.ok(kinds[k] > 100, k);
   assert.ok(noJa / n < 0.08, "日本語でない名前 " + noJa);
 });
+
+test("一覧：名水百選は昭和と平成の2つ、続日本100名城・日本の滝百選・平成の名水百選は100件そろう（日本語版 Wikipedia の一覧の表から）", () => {
+  const lists = JSON.parse(readFileSync(new URL("../data/lists.json", import.meta.url), "utf8")).lists;
+  const by = Object.fromEntries(lists.map((l) => [l.key, l]));
+  assert.equal(lists.filter((l) => /名水/.test(l.name)).length, 2);
+  assert.equal(by.meisui.name, "名水百選（昭和）"); assert.equal(by.heisei.name, "平成の名水百選");
+  for (const k of ["meisui", "heisei", "zokumeijo", "taki100", "meijo100"]) {
+    assert.equal(by[k].items.length, 100, k);
+    assert.equal(new Set(by[k].items.map((i) => i[0])).size, 100, k + " の id");
+  }
+  assert.ok(by.taki100.items.filter((i) => i[3]).length >= 95);
+  assert.ok(by.zokumeijo.items.filter((i) => i[3]).length >= 95);
+  assert.equal(markKindOf({ name: "x", lists: ["heisei"] }), "water");
+});
