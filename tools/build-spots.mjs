@@ -10,6 +10,7 @@ import { tileKey, distanceMeters } from '../logic.js';
 import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
 import { worldNearRows } from './build-world-near.mjs';
 import { fetchWikiList } from './wiki-list.mjs';
+import { fetchDamList } from './dam-card.mjs';
 const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -103,6 +104,14 @@ export const LISTS = [
   { key: 'meisho', name: '名勝', note: '国の名勝・特別名勝', radius: 300, cond: 'VALUES ?d { wd:Q11414752 wd:Q94987823 } ?s wdt:P1435 ?d ; wdt:P17 wd:Q17 .' },
   { key: 'shiseki', name: '史跡', note: '国の史跡・特別史跡', radius: 200, cond: 'VALUES ?d { wd:Q30834580 wd:Q26764449 } ?s wdt:P1435 ?d ; wdt:P17 wd:Q17 .' },
   { key: 'kanko', name: '観光地', note: 'Wikidata で観光地とされている場所', radius: 300, cond: '?s wdt:P31/wdt:P279* wd:Q570116 ; wdt:P17 wd:Q17 .' },
+  // 2026-10-19 追加：景観・棚田・古墳・空港・島（道路元標・三角点は Wikidata に座標つきの項目がほとんど無く、他に再配布できる座標データが無いので見送り）
+  { key: 'keikan', after: 'shiseki', name: '重要文化的景観', note: '文化庁選定。位置は所在地の市町村の中心（国土地理院の住所検索）', radius: 1000, wiki: { page: '重要文化的景観', format: 'keikan', areaOnly: true } },
+  { key: 'tanada', after: 'taki100', name: '日本の棚田百選', note: '農林水産省選定（1999年）。日本語版 Wikipedia の一覧の131件。記事の座標か、所在地の市町村の中心', radius: 500, wiki: { page: '日本の棚田百選', format: 'tanada' } },
+  { key: 'kofun', after: 'shiseki', name: '古墳', note: '国の史跡・特別史跡に指定された古墳', radius: 150, cond: 'VALUES ?d { wd:Q30834580 wd:Q26764449 } ?s wdt:P31/wdt:P279* wd:Q1141225 ; wdt:P17 wd:Q17 ; wdt:P625 [] ; wdt:P1435 ?d .' },
+  { key: 'airport', after: 'michinoeki', name: '空港', note: 'IATA コードのある国内の空港', radius: 500, cond: '?s wdt:P31/wdt:P279* wd:Q1248784 ; wdt:P17 wd:Q17 ; wdt:P625 [] ; wdt:P238 [] .' },
+  { key: 'island', after: 'michinoeki', name: '島', note: '人口の記録がある島か、面積3km²以上の島', radius: 500, cond: '?s wdt:P31/wdt:P279* wd:Q23442 ; wdt:P17 wd:Q17 ; wdt:P625 [] . { ?s wdt:P1082 ?pop FILTER(?pop > 0) } UNION { ?s p:P2046/psn:P2046/wikibase:quantityAmount ?area FILTER(?area >= 3000000) }' },
+  // ダムカード：国土交通省の配布ダム一覧（PDL1.0）のダム名＋都道府県を Wikidata のダムに名寄せして座標を付ける（tools/dam-card.mjs）。名寄せできなかったダムは座標なし
+  { key: 'damcard', after: 'island', name: 'ダムカード', note: '国土交通省「ダムカード」配布ダム一覧（令和8年1月16日現在。政府標準利用規約 PDL1.0 に準拠、加工して作成）。位置は Wikidata（CC0）のダムと名前で合わせたもの', radius: 300, dam: true },
   { key: 'michinoeki', name: '道の駅', note: '国土交通省登録', radius: 150, cond: '?s wdt:P31 wd:Q1187691 .' },
 ];
 
@@ -344,6 +353,7 @@ async function fetchGlobalList(list) {
 // 1つの一覧を取る：[{ id, name, lat, lng, pref, country }]（id 重複は1つに）。日本の一覧は country を固定で '日本' にする
 export async function fetchList(list, gsiCache) {
   if (list.global) return fetchGlobalList(list);
+  if (list.dam) return fetchDamList(list, { cacheDir: CACHE, refresh, sparql: (q, name) => sparql(q, name), gsiPref: (id, lat, lng) => gsiPrefFor(id, lat, lng, gsiCache) });
   if (list.wiki) return fetchWikiList(list, { cacheDir: CACHE, refresh, sparql: (q, name) => sparql(q, name), gsiPref: (id, lat, lng) => gsiPrefFor(id, lat, lng, gsiCache) });
   const base = await sparql(`SELECT ?s ?l ?c WHERE { ${list.cond}
     OPTIONAL { ?s wdt:P625 ?c }

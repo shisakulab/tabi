@@ -932,3 +932,18 @@ test("判子と印の呼び分け：初回の説明と印の記録画面に違�
   assert.ok(!/通った印/.test(app), "通った印の言い方は残さない");
   assert.match(html, /もらった印・写真を記録する/);
 });
+
+test("一覧の追加：重要文化的景観・日本の棚田百選・古墳・空港・島（再配布できるデータだけ。座標は Wikidata・国土地理院の住所検索）", () => {
+  const lists = JSON.parse(readFileSync(new URL("../data/lists.json", import.meta.url), "utf8")).lists;
+  const by = Object.fromEntries(lists.map((l) => [l.key, l]));
+  const min = { keikan: 70, tanada: 120, kofun: 200, airport: 80, island: 100 };
+  for (const [k, n] of Object.entries(min)) {
+    assert.ok(by[k] && by[k].items.length >= n, k + " " + (by[k] && by[k].items.length));
+    assert.equal(new Set(by[k].items.map((i) => i[0])).size, by[k].items.length, k + " の id");
+    assert.ok(by[k].items.filter((i) => i[3]).length / by[k].items.length > 0.9, k + " は座標つき");
+    assert.ok(by[k].note, k);
+  }
+  assert.equal(by.island.items.length > 100 && by.island.items.length < 300, true);
+  assert.equal(markKindOf({ name: "x", lists: ["kofun"] }), "kofun"); assert.equal(markKindOf({ name: "x", lists: ["airport"] }), "airport");
+  assert.equal(markKindOf({ name: "x", lists: ["tanada"] }), "tanada"); assert.equal(markKindOf({ name: "x", lists: ["keikan"] }), "landscape");
+});
