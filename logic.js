@@ -641,8 +641,8 @@ function exifGpsFrom(v, t, end) {
 // 同じ日・同じ場所はまとめて1つ（この一括の中の重複も、既に押してある判子も、どちらも増やさない）
 // 返り値：matches（{ spotId, date, photoIndex }の配列。photoIndex はその判子に付ける写真の最初の1枚）、
 //         withoutLocation（位置か日付が読めなかった写真の数）、withoutSpot（位置はあるが近くに場所がなかった写真の数）
-// 写真は少し離れた所から撮ることが多いので、判子の範囲より PHOTO_SLACK_METERS 広く取る（範囲 50m の場所なら 150m 以内）
-export const PHOTO_SLACK_METERS = 100;
+// 写真は少し離れた所から撮ることが多いので、判子の範囲より PHOTO_SLACK_METERS（30m）広く取る。ただし1枚の写真には1か所だけ（一覧の場所を先に、同じなら一番近い場所）
+export const PHOTO_SLACK_METERS = 30;
 export function matchPhotoStamps(photos, spots, visits, slack = PHOTO_SLACK_METERS) {
   const matches = [];
   const seen = new Set();
@@ -653,23 +653,25 @@ export function matchPhotoStamps(photos, spots, visits, slack = PHOTO_SLACK_METE
   for (let i = 0; i < photos.length; i++) {
     const p = photos[i];
     if (!p || !p.date || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) { withoutLocation++; if (p && !(Number.isFinite(p.lat) && Number.isFinite(p.lng))) noLocation.push(i); continue; }
-    let any = false;
+    // 1枚の写真につき1か所だけ：範囲に入る場所のうち、一覧の場所（tier=list）を先に、同じなら一番近い場所
+    let best = null;
     for (const spot of spots) {
       if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
       // 緯度の差だけで明らかに遠いものは先に外す（経路は点が多いので、距離の計算を減らす）
-      if (Math.abs(p.lat - spot.lat) * 111195 > Math.max(CHECKIN_METERS, Number(spot.radius) || 0)) continue;
+      if (Math.abs(p.lat - spot.lat) * 111195 > Math.max(CHECKIN_METERS, Number(spot.radius) || 0) + slack) continue;
       const d = distanceMeters(p, spot);
       if (!canStamp(spot, Math.max(0, d - slack), undefined)) {
         if (!nearest || d < nearest.distance) nearest = { name: spot.name, distance: d };
         continue;
       }
-      any = true;
-      const key = `${spot.id}_${p.date}`;
-      if (seen.has(key) || stampedOn(visits, spot.id, new Date(`${p.date}T12:00:00`))) continue;
-      seen.add(key);
-      matches.push({ spotId: spot.id, date: p.date, photoIndex: i });
+      const rank = spot.tier === 'near' ? 1 : 0;
+      if (!best || rank < best.rank || (rank === best.rank && d < best.d)) best = { spot, rank, d };
     }
-    if (!any) withoutSpot++;
+    if (!best) { withoutSpot++; continue; }
+    const key = `${best.spot.id}_${p.date}`;
+    if (seen.has(key) || stampedOn(visits, best.spot.id, new Date(`${p.date}T12:00:00`))) continue; // 同じ日・同じ場所はまとめて1つ
+    seen.add(key);
+    matches.push({ spotId: best.spot.id, date: p.date, photoIndex: i });
   }
   return { matches, withoutLocation, withoutSpot, noLocation, nearest: matches.length ? null : nearest };
 }

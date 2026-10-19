@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  festivalSpot, NEAR_KINDS, dailyCount, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, NEAR_KINDS, dailyCount, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -366,11 +366,13 @@ test('readExifGPS: II / MM / 南緯西経 / GPS なし / 壊れ', () => {
   assert.equal(readExifDate(makeGpsJpeg(true)), '2024-05-06');
 });
 
-test('matchPhotoStamps: 近くの場所（一覧・近所の両方）に撮影日の判子、同じ日同じ場所はまとめて1つ', () => {
+test('matchPhotoStamps: 1枚の写真につき1か所（一覧の場所を先に、同じなら近い方）、ゆとりは30m、同じ日同じ場所はまとめて1つ', () => {
+  assert.equal(PHOTO_SLACK_METERS, 30);
   const spots = [
     { id: 'a', lat: 35, lng: 135, radius: 50, tier: 'list' },
     { id: 'b', lat: 35, lng: 135, radius: 50, tier: 'near' }, // a と同じ場所を指す別の場所データ
     { id: 'far', lat: 36, lng: 135, radius: 50, tier: 'list' },
+    { id: 'c', lat: 35.0003, lng: 135, radius: 50, tier: 'near' }, // 近所の場所のほうが近くても、一覧の場所を先に
   ];
   const photos = [
     { date: '2026-10-10', lat: 35.0001, lng: 135 },
@@ -380,15 +382,22 @@ test('matchPhotoStamps: 近くの場所（一覧・近所の両方）に撮影�
     { date: '2026-10-12', lat: 10, lng: 10 }, // 近くに場所がない
   ];
   const r = matchPhotoStamps(photos, spots, []);
-  assert.equal(r.matches.length, 3); // a@10-10, b@10-10, far@10-11
-  assert.deepEqual(r.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['a_2026-10-10', 'b_2026-10-10', 'far_2026-10-11']);
+  assert.deepEqual(r.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['a_2026-10-10', 'far_2026-10-11']); // 1枚につき1か所
   assert.equal(r.matches.find((m) => m.spotId === 'a').photoIndex, 0); // 1枚目の写真が付く
   assert.equal(r.withoutLocation, 1);
   assert.equal(r.withoutSpot, 1);
-  // 既に押してある判子は増やさない
+  // 既に押してある判子は増やさない（別の場所に付け替えもしない）
   const visits = [{ id: 'v1', spotId: 'a', at: new Date('2026-10-10T12:00:00').getTime() }];
   const r2 = matchPhotoStamps(photos, spots, visits);
-  assert.deepEqual(r2.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['b_2026-10-10', 'far_2026-10-11']);
+  assert.deepEqual(r2.matches.map((m) => `${m.spotId}_${m.date}`).sort(), ['far_2026-10-11']);
+  // 一覧の場所が同じ優先度なら一番近い場所
+  const two = [{ id: 'p', lat: 35.0004, lng: 135, radius: 80, tier: 'list' }, { id: 'q', lat: 35.0001, lng: 135, radius: 80, tier: 'list' }];
+  assert.deepEqual(matchPhotoStamps([{ date: '2026-10-10', lat: 35, lng: 135 }], two, []).matches.map((m) => m.spotId), ['q']);
+  // ゆとりは30m：半径50m + 30m = 80m まで。90m は外れ、広い場所（半径500m）は半径の中ならよい
+  const edge = [{ id: 'e', lat: 35, lng: 135, radius: 50, tier: 'list' }, { id: 'w', lat: 40, lng: 135, radius: 500, tier: 'list' }];
+  assert.equal(matchPhotoStamps([{ date: '2026-10-10', lat: 35 + 75 / 111195, lng: 135 }], edge, []).matches.length, 1);
+  assert.equal(matchPhotoStamps([{ date: '2026-10-10', lat: 35 + 90 / 111195, lng: 135 }], edge, []).matches.length, 0);
+  assert.equal(matchPhotoStamps([{ date: '2026-10-10', lat: 40 + 450 / 111195, lng: 135 }], edge, []).matches.length, 1);
 });
 
 test('dailyQuests: 徒歩・自転車だけ、範囲内のまだ押していない場所から、同じ日は同じ顔ぶれ', () => {
