@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  festivalSpot, NEAR_KINDS, dailyCount, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, NEAR_KINDS, isOnsite, onsiteStampedOn, dailyCount, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -985,4 +985,30 @@ test("凡例の絞り込み：凡例の6項目がボタンで、押すとその�
   assert.match(app, /function legendPass\(/);
   assert.match(app, /localStorage\.setItem\(LEGEND_KEY/);
   assert.match(app, /list = list\.filter\(legendPass\)/);
+});
+
+test("判子の格（現地・写真）：source の無い古い判子と tap・auto は現地、photo・seal は写真。一覧は押した n（うち現地 m）、季節の判子は現地だけ", () => {
+  assert.ok(isOnsite({}) && isOnsite({ source: "tap" }) && isOnsite({ source: "auto" }));
+  assert.ok(!isOnsite({ source: "photo" }) && !isOnsite({ source: "seal" }) && !isOnsite(null));
+  const spots = [{ id: "a", lists: ["x"] }, { id: "b", lists: ["x"] }, { id: "c", lists: ["x"] }, { id: "s", lists: ["x"], seasons: [{ months: [10] }] }];
+  const at = new Date("2026-10-10T12:00:00").getTime();
+  const visits = [
+    { id: "1", spotId: "a", at, source: "photo" }, // 写真だけ
+    { id: "2", spotId: "b", at, source: "photo" }, { id: "3", spotId: "b", at: at + 864e5, source: "tap" }, // 写真のあとで現地：現地に格上げ
+    { id: "4", spotId: "c", at }, // 古い判子＝現地
+    { id: "5", spotId: "s", at, seasonal: true, source: "photo" }, // 季節でも写真は数えない
+  ];
+  const p = listProgress(visits, spots, "x");
+  assert.equal(p.count, 3); assert.equal(p.onsiteCount, 2);
+  const cell = (id) => p.cells.find((c) => c.id === id);
+  assert.equal(cell("a").got, true); assert.equal(cell("a").onsite, false);
+  assert.equal(cell("b").onsite, true); assert.equal(cell("c").onsite, true);
+  assert.equal(cell("s").got, false);
+  assert.equal(listProgress([{ id: "6", spotId: "s", at, seasonal: true, source: "tap" }], spots, "x").cells.find((c) => c.id === "s").got, true);
+  // 同じ日に写真の判子だけなら、現地では押せる（格上げ）。現地の判子があれば押せない
+  assert.equal(onsiteStampedOn(visits, "a", new Date("2026-10-10T20:00:00")), false);
+  assert.equal(onsiteStampedOn(visits, "c", new Date("2026-10-10T20:00:00")), true);
+  assert.equal(stampedOn(visits, "a", new Date("2026-10-10T20:00:00")), true);
+  assert.equal(shouldAutoStamp({ id: "a", lat: 35, lng: 135, radius: 50, lists: ["x"] }, [{ lat: 35, lng: 135, acc: 5, at: 0 }, { lat: 35, lng: 135, acc: 5, at: 200000 }], "walk", visits, new Date("2026-10-10T20:00:00")) === false, false);
+  assert.equal(countryProgress(visits, spots.map((s) => ({ ...s, country: "日本" })), "日本").onsiteCount, 2);
 });

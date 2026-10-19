@@ -1,7 +1,7 @@
 import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
-  todayStr, dailyCount, distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
+  todayStr, dailyCount, isOnsite, onsiteStampedOn, distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, festivalSpot, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
@@ -393,7 +393,7 @@ function render() {
 
 // ---------- 判子の状態 ----------
 const visitsOf = (spotId) => state.visits.filter((v) => v.spotId === spotId);
-const seasonalVisitsOf = (spotId) => visitsOf(spotId).filter((v) => v.seasonal);
+const seasonalVisitsOf = (spotId) => visitsOf(spotId).filter((v) => v.seasonal && isOnsite(v)); // 季節の判子は現地だけ
 const sameMonth = (v, d) => { const x = new Date(v.at); return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth(); };
 
 // 通った場所（範囲に入ったが判子は押していない）。{ spotId: 最後に通った時刻 }。この端末の localStorage にだけ置く
@@ -509,7 +509,8 @@ function hankoIcon(spot, far = false) {
   const lv = visitLevel(mine.length ? mine.length + passCountOf(spot.id) : went ? passCountOf(spot.id) : 0);
   const baseColor = off ? OFF_COLOR : stampColor(spot, isSeason);
   const color = mine.length && lv ? levelColor(baseColor, lv) : baseColor;
-  const cls = ['hanko', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : '', lv ? 'lv' + lv : '', far && !mine.length && !went ? 'far' : ''].filter(Boolean).join(' ');
+  const photoOnly = mine.length > 0 && !mine.some(isOnsite); // 写真から押した判子だけ（薄く、小さな「写」を付ける）
+  const cls = ['hanko', photoOnly ? 'photoonly' : '', isSeason ? 'season' : '', off ? 'off' : '', spot.tier === 'near' ? 'near' : '', mine.length ? '' : 'empty', went ? 'passed' : '', mine.length ? 'dbl' : '', lv ? 'lv' + lv : '', far && !mine.length && !went ? 'far' : ''].filter(Boolean).join(' ');
   const mark = isSeason ? spot.seasons[0].mark : null;
   const markEl = () => (isSeason && spot.kind !== 'festival' ? h('span', {}, mark) : kindMark(spot));
   // 押した場所に写真が付いていれば、文字の代わりに丸く切り抜いた写真を敷く（枠の色はそのまま残す）
@@ -1159,7 +1160,7 @@ function haptic(pattern = 60) {
 
 async function stamp(spot) {
   if (stamping) return;
-  if (stampedOn(state.visits, spot.id, now())) { toast('この場所の判子は今日もう押してあります'); return; }
+  if (onsiteStampedOn(state.visits, spot.id, now())) { toast('この場所の判子は今日もう押してあります'); return; }
   stamping = true;
   try {
     let pos = state.pos && Date.now() - state.posAt < 20000 ? state.pos : null;
@@ -1172,7 +1173,9 @@ async function stamp(spot) {
       return;
     }
     const season = seasonOf(spot, now());
-    const visit = { id: db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'tap' };
+    // その日に写真の判子があれば、新しく押さずに現地に格上げする（同じ日・同じ場所の判子は1つ）
+    const prior = state.visits.find((v) => v.spotId === spot.id && sameDay(v, now()) && !isOnsite(v));
+    const visit = { ...(prior || {}), id: prior ? prior.id : db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'tap' };
     await db.put('visits', visit);
     const shopN = await addShopMeals(spot, visit);
     const wasQuest = currentQuests().some((q) => q.id === spot.id);
@@ -1322,7 +1325,7 @@ function setLoopMinutes(v) { try { localStorage.setItem(LS + 'loopmin', String(v
 const loopText = (m, mode = state.mode) => [`約${(m / 1000).toFixed(1)}km`, mode === 'walk' ? `約${(Math.round(m / STEP_METERS / 100) * 100).toLocaleString()}歩` : null, `約${Math.round(m / (LOOP_SPEED_KMH[mode] * 1000) * 60 / 5) * 5}分`].filter(Boolean).join('・');
 function questDone(spot) {
   const d = now();
-  if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d));
+  if (spot.daily) return visitsOf(spot.id).some((v) => sameDay(v, d) && isOnsite(v)); // お題の達成は現地の判子だけ
   return seasonalVisitsOf(spot.id).some((v) => sameMonth(v, d));
 }
 // 散歩・サイクリングは毎日変わるので「今日のお題」、旅行は見頃の名所なので「神無月のお題」（和風月名）
@@ -1489,7 +1492,8 @@ async function autoStamp() {
   stamping = true;
   try {
     const season = seasonOf(spot, now());
-    const visit = { id: db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'auto' };
+    const prior = state.visits.find((v) => v.spotId === spot.id && sameDay(v, now()) && !isOnsite(v));
+    const visit = { ...(prior || {}), id: prior ? prior.id : db.newId(), spotId: spot.id, at: now().getTime(), lat: pos.lat, lng: pos.lng, mode: state.mode, seasonal: !!season, source: 'auto' };
     await db.put('visits', visit);
     const shopN = await addShopMeals(spot, visit);
     await loadData();
@@ -1560,7 +1564,7 @@ function drawNear(best) {
   if (!best) { nearSig = ''; nearEl.hidden = true; document.body.classList.remove('hasnear'); return; }
   const { spot, distance } = best;
   const can = canStamp(spot, distance, state.acc);
-  const done = stampedOn(state.visits, spot.id, now());
+  const done = onsiteStampedOn(state.visits, spot.id, now());
   const season = seasonOf(spot, now());
   const deg = Math.round(bearingDeg(state.pos, spot) / 10) * 10;
   const sig = [spot.id, Math.round(distance / 5), deg, can, done].join('|');
@@ -1735,9 +1739,11 @@ function watchMasuPhoto(el, photoId) {
   el._loadPhoto = load;
   masuObserver.observe(el);
 }
+// 「押した n（うち現地 m）」。写真の判子だけ混じっているときだけ現地の数を足す
+function countText(p) { return p.onsiteCount !== undefined && p.onsiteCount !== p.count ? `${p.count}（うち現地 ${p.onsiteCount}） / ${p.total}` : `${p.count} / ${p.total}`; }
 function masuCell(c, color, isSeason) {
   const el = h('button', {
-    class: 'masu' + (c.got ? ' got' : '') + (c.hasCoord === false ? ' nocoord' : '') + (isSeason ? ' season' : ''),
+    class: 'masu' + (c.got ? ' got' : '') + (c.got && c.onsite === false ? ' photoonly' : '') + (c.hasCoord === false ? ' nocoord' : '') + (isSeason ? ' season' : ''),
     type: 'button', style: `--c:${color}`, title: `${c.name}${c.pref ? `（${c.pref}）` : ''}`,
     onclick: () => openMasuDetail(c.id, c.name, c.pref),
   }, glyphOf(c.name));
@@ -1788,7 +1794,7 @@ function bookSpots() {
     const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || (kanaMap && (kanaMap.get(c.id) || '').includes(q))) : p.cells;
     if (!p.total || !cells.length) return null;
     return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
-      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
+      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, countText(p))),
       l.note ? h('p', { class: 'muted note' }, l.note) : null,
       barEl(p.count, p.total, color),
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, color, isSeason))));
@@ -1796,6 +1802,7 @@ function bookSpots() {
   const results = () => { const sections = sectionsFor(normalizeName(spotQuery)); return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')]; };
   return [
     masuDetailPanel(),
+    h('details', { class: 'helpq' }, h('summary', {}, '？ 判子の「現地」と「写真」'), h('p', { class: 'muted', style: 'margin:4px 0' }, '現地＝アプリを開いて、その場所の範囲で押した判子（濃い色）。写真＝写真などからあとで押した判子（薄い色）。季節の判子・お題の達成は現地だけで数えます。同じ場所にあとから現地で押すと、現地に格上がりします。一覧の数は「押した n（うち現地 m）」のように両方出します。')),
     ...searchBox('spotsearch', '名前・読み・別名で探す（例：きんかくじ）', spotQuery, (v) => { spotQuery = v; ensureKana(); }, results, { onfocus: ensureKana }),
     nearSealsSection(),
   ];
@@ -2157,7 +2164,7 @@ function bookCountries() {
     }
     if (!cells.length) return null;
     return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
-      h('summary', {}, h('b', {}, country), h('span', { class: 'n' }, `${p.count} / ${p.total}`)),
+      h('summary', {}, h('b', {}, country), h('span', { class: 'n' }, countText(p))),
       barEl(p.count, p.total, TIER_COLOR.list),
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
   }).filter(Boolean);
@@ -2358,7 +2365,7 @@ function diaryDayNodes(date) {
         const canGo = (s && Number.isFinite(s.lat)) || (Number.isFinite(v.lat) && Number.isFinite(v.lng));
         const row = h('div', { class: 'stampline' + (canGo ? ' go' : '') },
           h('span', { class: 'mini' + (v.seasonal ? ' season' : '') }, glyphOf(s ? s.name : '?')),
-          h('span', {}, `${s ? s.name : v.spotId}${v.seasonal ? '　季節の判子' : ''}`),
+          h('span', {}, `${s ? s.name : v.spotId}${v.seasonal && isOnsite(v) ? '　季節の判子' : ''}${isOnsite(v) ? '' : '　（写真から）'}`),
           h('span', { class: 'muted', style: 'margin-left:auto' }, MODE_VERB[v.mode] || '', canGo ? ' ›' : ''));
         // 押すと、地図のその場所へ移ってカードを開く（位置のない判子は押せない）
         if (canGo) { row.setAttribute('role', 'button'); row.tabIndex = 0; row.onclick = () => showOnMap(v.spotId, v.lat, v.lng); }
@@ -2851,6 +2858,7 @@ function openWelcome(done) {
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上のお題は、散歩・サイクリングでは毎日変わる「今日のお題」、旅行ではいま見頃の名所を集めた「今月のお題」です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・名勝・史跡・観光地などの名所、茶＝道の駅、緑＝近所の神社・お寺・温泉・喫茶店など。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
       h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩・サイクリングは回って戻ると約30分（設定で15・60分にも）のお題、旅行は世界の見頃の名所のお題になります。'),
+      h('li', {}, '判子には「現地」と「写真」の2つの格があります。現地＝アプリを開いて、その場所の範囲で押したもの（濃い色）。写真＝写真などからあとで押したもの（薄い色に「写」）。季節の判子とお題の達成は現地だけで数え、同じ場所にあとから現地で押すと現地に格上がりします。'),
       h('li', {}, '判子と印はちがいます。判子＝行った場所の近くで、アプリが押すもの。印＝御朱印・御城印・鉄印・ダムカードなど、現地でもらう紙やカードのこと。印は「＋」から、写真つきで記録します（判子は押されません）。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),

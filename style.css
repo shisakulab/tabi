@@ -441,3 +441,8 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .vbtns { display: flex; gap: 6px; }
 .placerec { margin: 6px 0; font-size: 14px; }
 .placerec summary { cursor: pointer; color: var(--muted, #666); }
+.hanko.photoonly { opacity: .55; }
+.hanko.photoonly::after { content: '写'; position: absolute; right: -4px; bottom: -4px; font-size: 9px; line-height: 1; padding: 1px 2px; border-radius: 3px; background: var(--paper, #fff); color: var(--ink2, #555); border: 1px solid var(--ink2, #555); }
+.masu.photoonly { opacity: .55; }
+.helpq { margin: 0 0 8px; font-size: 13px; }
+.helpq summary { cursor: pointer; color: var(--ink2, #555); }

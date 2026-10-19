@@ -333,10 +333,10 @@ export function classifyFood(name, foods) {
 // 見頃（seasons）を持つ場所は、季節の判子（seasonal）を押したときだけ埋まる。それ以外は判子が1つでもあれば埋まる
 export function listProgress(visits, spots, listKey) {
   const cells = spots.filter((s) => (s.lists || []).includes(listKey)).map((s) => {
-    const mine = visits.filter((v) => v.spotId === s.id && (!Array.isArray(s.seasons) || v.seasonal));
-    return { id: s.id, name: s.name, pref: s.pref || '', hasCoord: s.hasCoord !== undefined ? !!s.hasCoord : Number.isFinite(s.lat), got: mine.length > 0, visits: mine.length };
+    const mine = visits.filter((v) => v.spotId === s.id && (!Array.isArray(s.seasons) || (v.seasonal && isOnsite(v)))); // 季節の判子は現地で押したものだけ
+    return { id: s.id, name: s.name, pref: s.pref || '', hasCoord: s.hasCoord !== undefined ? !!s.hasCoord : Number.isFinite(s.lat), got: mine.length > 0, onsite: mine.some(isOnsite), visits: mine.length };
   });
-  return { key: listKey, count: cells.filter((c) => c.got).length, total: cells.length, cells };
+  return { key: listKey, count: cells.filter((c) => c.got).length, onsiteCount: cells.filter((c) => c.onsite).length, total: cells.length, cells };
 }
 
 // ---------- 都道府県 ----------
@@ -370,10 +370,10 @@ export function prefsVisited(visits, seals, meals, spots) {
 // 世界に広がる一覧（世界遺産など）の、国ごとの進み具合。listProgress の国版
 export function countryProgress(visits, spots, country) {
   const cells = spots.filter((s) => (s.country || '日本') === country).map((s) => {
-    const mine = visits.filter((v) => v.spotId === s.id && (!Array.isArray(s.seasons) || v.seasonal));
-    return { id: s.id, name: s.name, pref: s.pref || '', hasCoord: s.hasCoord !== undefined ? !!s.hasCoord : Number.isFinite(s.lat), got: mine.length > 0, visits: mine.length };
+    const mine = visits.filter((v) => v.spotId === s.id && (!Array.isArray(s.seasons) || (v.seasonal && isOnsite(v)))); // 季節の判子は現地で押したものだけ
+    return { id: s.id, name: s.name, pref: s.pref || '', hasCoord: s.hasCoord !== undefined ? !!s.hasCoord : Number.isFinite(s.lat), got: mine.length > 0, onsite: mine.some(isOnsite), visits: mine.length };
   });
-  return { country, count: cells.filter((c) => c.got).length, total: cells.length, cells };
+  return { country, count: cells.filter((c) => c.got).length, onsiteCount: cells.filter((c) => c.onsite).length, total: cells.length, cells };
 }
 
 // spots に出てくる国の一覧（重複なし）
@@ -457,6 +457,13 @@ export function remapVisits(visits, aliases) {
 }
 
 // その場所に今日（date の日）すでに判子があるか
+// 判子には「現地」と「写真」の2つの格がある。現地＝アプリを開いてその場所の範囲で押したもの（手で押す tap・自動 auto。source の無い古い判子も現地）、
+// 写真＝写真からまとめて・位置の無い写真・記録画面・過去の読み込み（photo・seal など）。季節の判子・お題の達成は現地だけ数える
+export const isOnsite = (v) => !!v && (!v.source || v.source === 'tap' || v.source === 'auto');
+// 同じ日に現地の判子があるか（写真の判子だけなら、後から現地で押して格上げできる）
+export function onsiteStampedOn(visits, spotId, date = new Date()) {
+  return stampedOn((visits || []).filter(isOnsite), spotId, date);
+}
 export function stampedOn(visits, spotId, date = new Date()) {
   const d = todayStr(date);
   return visits.some((v) => v.spotId === spotId && todayStr(new Date(v.at)) === d);
@@ -493,7 +500,7 @@ export function shouldAutoStamp(spot, fixes, mode, visits, now = new Date()) {
   if (!spot || !Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) return false;
   if (!Array.isArray(spot.lists) || !spot.lists.length) return false;
   if (!fixes || !fixes.length) return false;
-  if (stampedOn(visits, spot.id, now)) return false;
+  if (onsiteStampedOn(visits, spot.id, now)) return false;
   const limit = Math.max(CHECKIN_METERS, Number(spot.radius) || 0);
   const inside = (f) => canStamp(spot, distanceMeters(f, spot), f.acc);
   const last = fixes[fixes.length - 1];
