@@ -36,7 +36,9 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; margin: 0; }
 
 .btn { min-height: 44px; padding: 0 16px; border: 1px solid var(--ink); background: var(--card); border-radius: 8px; }
 .btn.primary { background: var(--ink); color: var(--paper); }
-.btn.danger { border-color: #b3382c; color: #b3382c; }
+/* 取り消し・削除：線だけだと薄く見えるので塗りつぶしにする */
+.btn.danger { border-color: #b3382c; background: #b3382c; color: #fff; font-weight: 700; }
+@media (prefers-color-scheme: dark) { .btn.danger { border-color: #e0574b; background: #c8443a; } }
 .muted { color: var(--ink2); font-size: 14px; }
 .sub { font-size: 14px; color: var(--ink2); margin: 0 0 8px; }
 .list { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
