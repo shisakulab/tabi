@@ -481,6 +481,7 @@ export const MEMO_TYPE = '写真・メモ';
 export function sealTypeFor(spot) {
   if (!spot) return null;
   if (spot.seal) return spot.seal;
+  if ((spot.lists || []).includes('damcard')) return 'ダムカード';
   const name = spot.name || '';
   if (name.includes('城')) return '御城印';
   if (/神社|大社|神宮|宮|稲荷|寺|院|堂|大師|不動/.test(name)) return '御朱印';
@@ -873,6 +874,7 @@ export function markKindOf(spot) {
   if (/温泉/.test(name)) return 'onsen';
   if (/(博物館|美術館|資料館|記念館)$/.test(name)) return 'museum';
   if (lists.includes('meisui') || lists.includes('heisei')) return 'water';
+  if (lists.includes('damcard')) return 'dam';
   if (lists.includes('kofun')) return 'kofun';
   if (lists.includes('airport')) return 'airport';
   if (lists.includes('island')) return 'island';

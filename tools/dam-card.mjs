@@ -20,13 +20,15 @@ export const normDam = (s) => (s || '').normalize('NFKC').replace(/[\s　]/g, ''
 
 // 配布ダム一覧の行 → [{ no, name, pref, place, river }]（ダム名・都道府県の組で重複を1つに）
 export function damRowsOf(rows) {
+  const firstLine = (s) => String(s).split(/[\r\n]+/)[0].trim(); // 「玉川ダム（改行）［国交省］」のように管理者が付くので1行目だけ
   const out = []; const seen = new Set();
   for (const r of rows) {
     if (!/^\d+$/.test(r.A || '') || !r.D) continue;
-    const key = `${r.D}|${r.H}`;
+    const dname = firstLine(r.D);
+    const key = `${dname}|${(r.H || '').trim()}`;
     if (seen.has(key)) { const prev = out.find((x) => `${x.name}|${x.pref}` === key); if (prev && r.F && !prev.places.includes(r.F)) prev.places.push(r.F); continue; }
     seen.add(key);
-    out.push({ no: Number(r.A), name: r.D.trim(), pref: (r.H || '').trim(), places: r.F ? [r.F.trim()] : [], river: (r.C || '').trim() });
+    out.push({ no: Number(r.A), name: dname, pref: (r.H || '').trim(), places: r.F ? [r.F.trim()] : [], river: (r.C || '').trim() });
   }
   return out;
 }
@@ -80,12 +82,16 @@ export async function fetchDamList(list, { cacheDir, refresh, sparql, gsiPref, s
   const used = new Set(); const out = []; const missing = [];
   for (const r of dams) {
     const cands = (byName.get(normDam(r.name)) || []).filter((d) => !used.has(d.id));
-    let hit = cands.find((d) => d.pref && d.pref === r.pref) || (cands.length === 1 && (!cands[0].pref || cands[0].pref === r.pref) ? cands[0] : null);
-    // 都道府県が合うものが無ければ、同じ名前が1つだけで、県が違う場合は採らない（同名の別のダム）
+    // 都道府県が合うものを先に。合うものが無くても、同じ名前のダムが全国で1つだけなら採る（県境にあるダムは Wikidata の県と違うことがある）
+    const hit = cands.find((d) => d.pref && d.pref === r.pref) || (cands.length === 1 ? cands[0] : null);
     if (hit) used.add(hit.id);
     else missing.push(`${r.name}（${r.pref}）`);
     out.push({ id: hit ? hit.id : `damcard_${r.no}`, name: r.name, lat: hit ? hit.lat : null, lng: hit ? hit.lng : null, pref: r.pref, country: '日本', places: r.places });
   }
   stats.total = dams.length; stats.matched = dams.length - missing.length; stats.missing = missing; stats.source = info.url; stats.rows = rows.filter((r) => /^\d+$/.test(r.A || '')).length;
+  // 配布場所は、カードの詳細に出す（data/damcard.json：id → 配布場所の一覧）
+  await writeFile(path.join(root, 'data', 'damcard.json'), JSON.stringify({ source: '国土交通省「ダムカード」配布ダム一覧（政府標準利用規約 PDL1.0 に準拠、加工して作成）', asOf: '令和8年1月16日', places: Object.fromEntries(out.map((o) => [o.id, o.places])) }));
+  console.log(`ダムカード：配布ダム ${stats.total} 件のうち名寄せできた ${stats.matched} 件、できなかった ${missing.length} 件`);
+  if (missing.length) console.log('名寄せできなかったダム：' + missing.join('、'));
   return out;
 }

@@ -18,7 +18,7 @@ const FOOD_COLOR = '#b5752e';
 const OFF_COLOR = '#8a9699'; // 見頃でない季節の名所
 const ROAD_COLOR = '#9a6b2f'; // 道の駅
 const MODE_VERB = { walk: '歩いて', bike: '自転車で', trip: '旅行で', train: '電車で', car: '車で', plane: '飛行機で' };
-const SEAL_TYPES = [MEMO_TYPE, '御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'その他'];
+const SEAL_TYPES = [MEMO_TYPE, '御朱印', '御城印', '鉄印', '御船印', '灯台御守印', 'ダムカード', 'マンホールカード', 'その他'];
 const MIN_ZOOM_ALL = 10; // これより引いているときは季節の名所と世界遺産・重伝建だけ
 const MIN_ZOOM_SHOP = 14; // ご当地グルメのお店を出す寄り具合
 const MIN_ZOOM_NEAR = 15; // これより引いているときは近所の場所（温泉・銭湯・神社・お寺）を出さない。都心は数が多く、引くと地図が埋まる
@@ -478,6 +478,7 @@ const KIND_SVG = (() => {
     church: s('M12 2v5M9.5 4h5M6 21V12l6-4.5 6 4.5v9M3 21h18M10 21v-5h4v5'),
     mosque: s('M12 2v2.5M5 21V12M19 21V12M5 12a7 7 0 0 1 14 0M3 21h18M10 21v-4a2 2 0 0 1 4 0v4M5 9V5M19 9V5'),
     synagogue: s('M12 3l7.5 13h-15zM12 21 4.5 8h15z'),
+    dam: s('M3 6h18l-3 14H6zM8 10h8M7 15h10'),
     kofun: s('M3 20h18M5 20c0-5 3-9 7-9s7 4 7 9M9 11V8a3 3 0 0 1 6 0v3'),
     airport: s('M2 14l8-2 3-8h2l-1 8 6 2 1 2-7-1-2 5h-2l.5-5.5L2 16z'),
     island: s('M3 19c2-1.5 4-1.5 6 0s4 1.500 6 0 4-1.500 6 0M8 15c0-4 3-6 4-9 1 3 4 5 4 9z'),
@@ -723,6 +724,18 @@ function origNameOf(id) {
 function origNameEl(id, name) {
   const o = origNameOf(id);
   return o && o !== name ? h('div', { class: 'muted', style: 'font-size:12px;margin:0 0 2px;word-break:break-word' }, o) : null;
+}
+// ダムカードの配布場所（data/damcard.json。国土交通省「ダムカード」配布ダム一覧を加工して作成、PDL1.0 に準拠）
+let damPlaces = null;
+function damPlacesEl(spot) {
+  if (!spot || !(spot.lists || []).includes('damcard')) return null;
+  const box = h('div', { class: 'muted', style: 'margin:4px 0;font-size:13px' });
+  const fill = () => {
+    const ps = (damPlaces.places || {})[spot.id];
+    if (ps && ps.length) box.replaceChildren(h('div', {}, 'ダムカード配布場所：' + ps.map((p) => p.replace(/\s+/g, ' ')).join(' ／ ')), h('div', {}, '出典：国土交通省「ダムカード」配布ダム一覧（令和8年1月16日現在、加工して作成）'));
+  };
+  if (damPlaces) fill(); else fetchJson('data/damcard.json', { places: {} }).then((j) => { damPlaces = j; fill(); });
+  return box;
 }
 function spotInfoEl(spot) {
   const box = h('div', { class: 'spotinfo' });
@@ -1007,6 +1020,7 @@ function showCard(spot) {
     h('button', { class: 'cardx', type: 'button', 'aria-label': '閉じる', onclick: closeCard }, '×'),
     h('h3', {}, spot.name),
     origNameEl(spot.id, spot.name),
+    damPlacesEl(spot),
     h('p', { class: 'sub', style: 'margin:2px 0 6px' },
       spotTags(spot).map((t) => h('span', { class: 'tag t-' + spot.tier }, t)),
       spot.seasons ? h('span', { class: 'tag season' }, `${spot.seasons[0].months.map((m) => m + '月').join('・')} ${spot.seasons[0].label}`) : null,
@@ -1617,6 +1631,7 @@ function openMasuDetail(id, name, pref) {
   const body = h('div', { class: 'popbody' },
     h('div', {}, h('b', { style: 'font-size:18px' }, name), pref ? h('span', { class: 'muted' }, '　' + pref) : null),
     origNameEl(id, name),
+    damPlacesEl(spotById(id)),
     spotInfoEl({ id, name }),
     hasCoord ? null : h('p', { class: 'muted', style: 'margin:4px 0 0' }, '位置が分からないため地図では開けません'),
     stampDatesEl(id),

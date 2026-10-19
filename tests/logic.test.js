@@ -12,6 +12,7 @@ import { CLOSED_SPOTS, dropClosed } from '../tools/build-spots.mjs';
 import { hasJa, jaName, jaDesc } from '../tools/names-ja.mjs';
 import { worldNearKind, pickCity, CITY_CAPS } from '../tools/build-world-near.mjs';
 import { CITIES } from '../tools/world-cities.mjs';
+import { damRowsOf, normDam } from '../tools/dam-card.mjs';
 import { shardOf, SHARDS } from '../tools/build-photos.mjs';
 import seasons from '../themes/seasons.js';
 
@@ -946,4 +947,23 @@ test("一覧の追加：重要文化的景観・日本の棚田百選・古墳�
   assert.equal(by.island.items.length > 100 && by.island.items.length < 300, true);
   assert.equal(markKindOf({ name: "x", lists: ["kofun"] }), "kofun"); assert.equal(markKindOf({ name: "x", lists: ["airport"] }), "airport");
   assert.equal(markKindOf({ name: "x", lists: ["tanada"] }), "tanada"); assert.equal(markKindOf({ name: "x", lists: ["keikan"] }), "landscape");
+});
+
+
+test("ダムカード：配布ダム一覧の行からダム名（管理者の行は除く）・配布場所を読み、名前の表記ゆれをそろえる。一覧と配布場所の出典つき", () => {
+  const rows = [{ A: "番号" }, { A: "1", C: "石狩川", D: "大雪ダム", F: "大雪ダム管理支所", H: "北海道" }, { A: "78", D: "玉川ダム\r\n［国交省］", F: "玉川ダム管理所", H: "秋田県" }, { A: "79", D: "玉川ダム\r\n［国交省］", F: "別の窓口", H: "秋田県" }];
+  const d = damRowsOf(rows);
+  assert.equal(d.length, 2); assert.equal(d[1].name, "玉川ダム"); assert.deepEqual(d[1].places, ["玉川ダム管理所", "別の窓口"]);
+  assert.equal(normDam("奥只見ダム"), normDam("奥只見 ダム")); assert.equal(normDam("三ヶ島ダム"), normDam("三ケ島ダム")); assert.equal(normDam("夕張シューパロダム（建設中）"), normDam("夕張シューパロ"));
+  const lists = JSON.parse(readFileSync(new URL("../data/lists.json", import.meta.url), "utf8")).lists;
+  const dam = lists.find((l) => l.key === "damcard");
+  assert.equal(dam.name, "ダムカード"); assert.match(dam.note, /PDL1\.0/);
+  assert.ok(dam.items.length > 750 && dam.items.filter((i) => i[3]).length > 650, "ダムカードの件数");
+  const places = JSON.parse(readFileSync(new URL("../data/damcard.json", import.meta.url), "utf8"));
+  assert.match(places.source, /国土交通省/);
+  assert.ok(dam.items.every((i) => places.places[i[0]] && places.places[i[0]].length), "配布場所");
+  assert.equal(markKindOf({ name: "x", lists: ["damcard"] }), "dam");
+  assert.equal(sealTypeFor({ name: "大雪ダム", lists: ["damcard"] }), "ダムカード");
+  const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  assert.match(app, /'ダムカード', 'マンホールカード'/);
 });
