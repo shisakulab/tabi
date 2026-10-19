@@ -527,6 +527,42 @@ let mainMap = null; let layer = null; let posDot = null; let card = null;
 const markers = new Map();
 function closeCard() { if (card) { card.remove(); card = null; } }
 
+// ---------- 凡例の絞り込み ----------
+// 左下の凡例の項目を押すと、その種類（見頃・名所・近所）／状態（まだ・通った・押した）だけ地図に出す。押した項目は強調、もう一度押すと解除、複数選べる。
+// 種類どうし・状態どうしは「または」、種類と状態は「かつ」。覚えておく（localStorage）
+const LEGEND_KINDS = ['season', 'list', 'near'];
+const LEGEND_STATUS = ['notyet', 'passed', 'stamped'];
+const LEGEND_KEY = 'tabigoyomi.legendfilter';
+const legendOn = new Set((() => { try { const v = JSON.parse(localStorage.getItem(LEGEND_KEY) || '[]'); return Array.isArray(v) ? v.filter((k) => LEGEND_KINDS.includes(k) || LEGEND_STATUS.includes(k)) : []; } catch { return []; } })());
+function legendPass(s) {
+  const kind = s.seasons ? 'season' : s.tier === 'near' || s.kind === 'foodshop' ? 'near' : 'list';
+  if (LEGEND_KINDS.some((k) => legendOn.has(k)) && !legendOn.has(kind)) return false;
+  if (LEGEND_STATUS.some((k) => legendOn.has(k))) {
+    const mine = s.seasons ? seasonalVisitsOf(s.id) : visitsOf(s.id);
+    const st = mine.length ? 'stamped' : passed()[s.id] ? 'passed' : 'notyet';
+    if (!legendOn.has(st)) return false;
+  }
+  return true;
+}
+const legendStatusShows = (k) => !LEGEND_STATUS.some((x) => legendOn.has(x)) || legendOn.has(k);
+function initLegend() {
+  const root = document.querySelector('.legend');
+  if (!root) return;
+  const clear = root.querySelector('.lgclear');
+  const paint = () => {
+    root.classList.toggle('filtering', legendOn.size > 0);
+    root.querySelectorAll('[data-lg]').forEach((b) => { const on = legendOn.has(b.dataset.lg); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    if (clear) clear.hidden = legendOn.size === 0;
+  };
+  const save = () => { try { localStorage.setItem(LEGEND_KEY, JSON.stringify([...legendOn])); } catch { /* 保存できなくても続ける */ } };
+  root.querySelectorAll('[data-lg]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.lg;
+    if (legendOn.has(k)) legendOn.delete(k); else legendOn.add(k);
+    save(); paint(); drawMap();
+  }));
+  if (clear) clear.addEventListener('click', () => { legendOn.clear(); save(); paint(); drawMap(); });
+  paint();
+}
 function initMap() {
   if (typeof L === 'undefined') {
     mapEl.replaceChildren(h('p', { class: 'muted', style: 'padding:80px 16px' }, '地図を読み込めませんでした（通信を確認してください）'));
@@ -583,6 +619,8 @@ async function drawMap() {
     groups = z >= MIN_ZOOM_NEAR ? [] : pixelGroups(inView.filter((s) => s.tier === 'near' && !mineNear(s)), z);
   }
   if (seq !== drawSeq) return;
+  // 凡例で絞り込み中なら、その種類・その状態の場所だけ（数の丸は近所の場所だけを数えるので、近所を選んでいて状態の絞りがないときだけ）
+  if (legendOn.size) { list = list.filter(legendPass); if (!(legendOn.has('near') && !LEGEND_STATUS.some((k) => legendOn.has(k)))) groups = []; }
   layer.clearLayers();
   markers.clear();
   for (const g of groups) {
@@ -602,7 +640,7 @@ async function drawMap() {
   if (z < MIN_ZOOM_ALL) {
     const shown = dot ? new Set() : new Set(list.map((s) => s.id));
     // 通っただけの場所は白抜きの輪（押した場所より下、数の丸より上）
-    for (const g of myPassedGroups(b, z, shown)) {
+    for (const g of (legendStatusShows('passed') ? myPassedGroups(b, z, shown) : [])) {
       // 数が多いほど大きく（押した丸と同じ升に重なっても、外側に輪がのぞくように）
       const size = g.n > 1 ? Math.min(34, Math.round(20 + 3 * Math.log2(g.n))) : 12;
       L.marker([g.lat, g.lng], {
@@ -611,7 +649,7 @@ async function drawMap() {
       }).on('click', () => mainMap.setView([g.lat, g.lng], Math.min(z + 3, MIN_ZOOM_ALL), { animate: !reduceMotion() }))
         .addTo(layer);
     }
-    for (const g of myStampGroups(b, z, shown)) {
+    for (const g of (legendStatusShows('stamped') ? myStampGroups(b, z, shown) : [])) {
       const size = g.n > 1 ? 22 : 16;
       L.marker([g.lat, g.lng], {
         icon: L.divIcon({ className: 'hanko-wrap', html: h('div', { class: 'mydot lv' + visitLevel(g.cnt), style: `--c:${g.color};width:${size}px;height:${size}px` }, g.n > 1 ? String(g.n) : ''), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
@@ -2857,6 +2895,7 @@ function startLocation() {
   await loadCatalog();
   drawModes();
   initMap();
+  initLegend();
   render();
   if (!welcomed()) openWelcome(() => { startLocation(); openImportAsk(); });
   else if (!importAsked()) { startLocation(); openImportAsk(); }

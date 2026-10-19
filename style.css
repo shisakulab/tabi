@@ -142,8 +142,12 @@ body.hasnear .leaflet-top.leaflet-right { top: calc(var(--safe-t) + 254px); }
 .legend {
   position: fixed; left: 8px; bottom: calc(var(--safe-b) + 34px); z-index: 450; display: grid; gap: 2px;
   padding: 4px 8px; border-radius: 8px; background: color-mix(in srgb, var(--paper) 88%, transparent); font-size: 11px; line-height: 1.4;
-  pointer-events: none;
 }
+.legend button { all: unset; cursor: pointer; display: block; padding: 1px 3px; border-radius: 5px; font: inherit; color: inherit; }
+.legend button.on { background: color-mix(in srgb, var(--ink2) 22%, transparent); font-weight: 700; box-shadow: inset 0 0 0 1px var(--ink2); }
+.legend.filtering button:not(.on):not(.lgclear) { opacity: .55; }
+.legend .lgclear { background: var(--seal); color: #fff; font-weight: 700; text-align: center; margin-bottom: 2px; }
+.legend .lgclear[hidden] { display: none; }
 .legend .ring { width: 8px; height: 8px; background: none; border: 1.5px solid var(--ink2); }
 .legend .ring.dash { border-style: dashed; }
 .legend .ring.fill { background: var(--ink2); }

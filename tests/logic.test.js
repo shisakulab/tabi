@@ -976,3 +976,13 @@ test("ダムカード：配布ダム一覧の行からダム名（管理者の�
   const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
   assert.match(app, /'ダムカード', 'マンホールカード'/);
 });
+
+test("凡例の絞り込み：凡例の6項目がボタンで、押すとその種類・状態だけ地図に出し、解除ボタン・覚える（localStorage）が付いている", () => {
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  for (const k of ["season", "list", "near", "notyet", "passed", "stamped"]) assert.match(html, new RegExp(`<button type="button" data-lg="${k}">`), k);
+  assert.match(html, /class="lgclear" hidden>絞り込み中・解除/);
+  assert.match(app, /function legendPass\(/);
+  assert.match(app, /localStorage\.setItem\(LEGEND_KEY/);
+  assert.match(app, /list = list\.filter\(legendPass\)/);
+});
