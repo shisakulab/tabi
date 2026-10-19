@@ -1,7 +1,7 @@
 import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
-  todayStr, dailyCount, isOnsite, onsiteStampedOn, distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
+  todayStr, dailyCount, isOnsite, onsiteStampedOn, stampStreak, streakText, almostComplete, distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, festivalSpot, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
@@ -170,12 +170,16 @@ async function loadCatalog() {
   state.climate = climate;
   state.tileCounts = meta.tileCounts || {};
   state.lists = lists.lists.map((l) => ({ key: l.key, name: l.name, note: l.note, global: !!l.global }));
+  // 世界遺産は「日本の世界遺産」を独立した一覧にして、世界遺産（海外）と分ける（ぜんぶ混ざった6千件の中に日本の分が埋もれていた）
+  const hi = state.lists.findIndex((l) => l.key === 'heritage');
+  if (hi >= 0) state.lists.splice(hi, 0, { key: 'heritageJp', name: '日本の世界遺産', note: '日本の世界遺産の構成資産', global: false });
   for (const l of lists.lists) {
     for (const [id, name, pref, hasCoord, rawCountry, lat, lng] of l.items) {
       const country = COUNTRY_ALIAS[rawCountry] || rawCountry;
       // 座標も一覧に持たせる（帳面から、まだ読み込んでいない区画＝遠くや海外の場所を地図で開くため）
       const cur = state.catalog.get(id) || { id, name, pref, hasCoord: !!hasCoord, country: country || '日本', lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, lists: [] };
       cur.lists.push(l.key);
+      if (l.key === 'heritage' && cur.country === '日本') cur.lists.push('heritageJp');
       state.catalog.set(id, cur);
     }
   }
@@ -1208,11 +1212,29 @@ async function celebrate(spot) {
   if (hk && motion) { hk.classList.add('pop'); await sleep(550); }
 }
 
+// 押した直後に出す「どの一覧のマスが埋まったか」。この判子で初めて埋まった一覧だけ（「日本100名城 23→24 / 100、あと76」）。全部埋まったら完成
+function fillLines(spot) {
+  const keys = new Set([...(spot.lists || []), ...(((state.catalog.get(spot.id) || {}).lists) || [])]);
+  const out = [];
+  for (const l of state.lists) {
+    if (!keys.has(l.key)) continue;
+    const p = progressOf(l.key);
+    const c = p.cells.find((x) => x.id === spot.id);
+    if (!c || !c.got || c.visits !== 1) continue; // 前から埋まっていた一覧は出さない
+    const done = p.total > 0 && p.count === p.total;
+    out.push({ name: listTitle(l), before: p.count - 1, count: p.count, total: p.total, left: p.total - p.count, done });
+  }
+  return out;
+}
 function openStamped(spot, season) {
   const n = visitsOf(spot.id).length;
+  const fills = fillLines(spot);
+  const complete = fills.find((f) => f.done);
   showSheet(null, [
     h('h2', { style: 'font-size:22px;text-align:center;margin:0 0 4px' }, season ? `季節の判子（${season.label}）` : '判子を押しました'),
     h('p', { class: 'sub', style: 'text-align:center' }, `${spot.name}（${n}回目）`),
+    complete ? h('div', { class: 'kansei', 'aria-label': `${complete.name} 完成` }, h('span', {}, '完成'), h('small', {}, complete.name)) : null,
+    fills.length ? h('ul', { class: 'fills' }, fills.map((f) => h('li', {}, f.done ? `${f.name}　完成！（${f.total} / ${f.total}）` : `${f.name}　${f.before}→${f.count} / ${f.total}、あと${f.left}`))) : null,
     h('p', { style: 'text-align:center;margin:8px 0 14px' }, 'もらった御朱印・御城印などの印（紙やカード）は、写真で残せます。写真とひとことだけでもOK。'),
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, sealTypeFor(spot) ? 'もらった印・写真を記録' : '写真・メモを残す'),
@@ -1344,6 +1366,7 @@ function drawQuest() {
       h('span', { class: 'muted' }, state.dailyLoop ? `回って戻ると${loopText(state.dailyLoop).split('・')[0]}` : qs.some((s) => s.daily) ? (qs.some((s) => !s.daily) ? 'いま見頃・近所' : '近所の今日のお題') : 'いま見頃の場所'),
       qs.length ? h('span', { class: 'qcount' }, `${got}/${qs.length}`) : null,
       state.pos && DAILY_MODES.includes(state.mode) ? h('button', { class: 'qreroll', type: 'button', 'aria-label': '別のお題', title: '別のお題', onclick: (e) => { e.stopPropagation(); rerollQuests(); } }, '🎲') : null),
+    h('div', { class: 'qstreak' }, streakText(stampStreak(state.visits, d))),
     qs.length
       // 枠を押すとお題の一覧、1つの場所の札を押すとその場所のカード（お題の枠はボタンなので、札は div で受けて一覧を開かないようにする）
       ? h('div', { class: 'qrow' }, qs.map((s) => h('div', { class: 'qchip' + (questDone(s) ? ' got' : ''), role: 'button', tabindex: '0', 'aria-label': `${s.name}を地図で見る`,
@@ -1785,16 +1808,33 @@ function ensureKana() {
     if (spotQuery && state.tab === 'spots' && !sheetEl.hidden && refreshSearch) refreshSearch();
   });
 }
+// 帳面の先頭：あと少しで埋まる一覧（残り1〜3マス、都道府県ごとの名城などあと1つ）。押すとそのマスの詳細
+function almostEl() {
+  const lists = state.lists.filter((l) => l.key !== 'seasons' && l.key !== 'heritage').map((l) => ({ key: l.key, name: l.name, cells: progressOf(l.key).cells }));
+  const items = almostComplete(lists, 6);
+  if (!items.length) return null;
+  return h('section', { class: 'almost' },
+    h('div', { class: 'listhead' }, h('b', {}, 'あと少しで埋まる')),
+    items.map((it) => h('div', { class: 'almostrow' },
+      h('span', { class: 'al' }, `${it.label}　${it.count} / ${it.total}、あと${it.remaining.length}`),
+      h('span', { class: 'ar' }, it.remaining.map((c) => h('button', { class: 'btn', type: 'button', style: 'min-height:30px;padding:0 8px;font-size:13px', onclick: () => openMasuDetail(c.id, c.name, c.pref) }, c.name))))));
+}
+// 一覧の進み具合。世界遺産（海外）は日本の分を除く（日本の世界遺産は別の一覧）
+function progressOf(key) {
+  const spots = allListSpots();
+  return listProgress(state.visits, key === 'heritage' ? spots.filter((s) => (s.country || '日本') !== '日本') : spots, key);
+}
+const listTitle = (l) => (l.key === 'heritage' ? '世界遺産（海外）' : l.name);
 function bookSpots() {
   const spots = allListSpots();
   const sectionsFor = (q) => state.lists.map((l) => {
-    const p = listProgress(state.visits, spots, l.key);
+    const p = progressOf(l.key);
     const isSeason = l.key === 'seasons';
     const color = isSeason ? 'var(--seal)' : TIER_COLOR.list;
     const cells = q ? p.cells.filter((c) => normalizeName(c.name).includes(q) || (kanaMap && (kanaMap.get(c.id) || '').includes(q))) : p.cells;
     if (!p.total || !cells.length) return null;
     return h('details', { class: 'listgroup' + (p.count ? ' got' : ''), open: q ? true : p.total <= FOLD_OVER },
-      h('summary', {}, h('b', {}, l.name), h('span', { class: 'n' }, countText(p))),
+      h('summary', {}, h('b', {}, listTitle(l)), p.total && p.count === p.total ? h('span', { class: 'kanseimark' }, '完成') : null, h('span', { class: 'n' }, countText(p))),
       l.note ? h('p', { class: 'muted note' }, l.note) : null,
       barEl(p.count, p.total, color),
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, color, isSeason))));
@@ -1802,6 +1842,7 @@ function bookSpots() {
   const results = () => { const sections = sectionsFor(normalizeName(spotQuery)); return [sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, '見つかりませんでした')]; };
   return [
     masuDetailPanel(),
+    almostEl(),
     h('details', { class: 'helpq' }, h('summary', {}, '？ 判子の「現地」と「写真」'), h('p', { class: 'muted', style: 'margin:4px 0' }, '現地＝アプリを開いて、その場所の範囲で押した判子（濃い色）。写真＝写真などからあとで押した判子（薄い色）。季節の判子・お題の達成は現地だけで数えます。同じ場所にあとから現地で押すと、現地に格上がりします。一覧の数は「押した n（うち現地 m）」のように両方出します。')),
     ...searchBox('spotsearch', '名前・読み・別名で探す（例：きんかくじ）', spotQuery, (v) => { spotQuery = v; ensureKana(); }, results, { onfocus: ensureKana }),
     nearSealsSection(),

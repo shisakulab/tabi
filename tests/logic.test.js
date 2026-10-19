@@ -4,7 +4,7 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  festivalSpot, NEAR_KINDS, isOnsite, onsiteStampedOn, dailyCount, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, NEAR_KINDS, stampStreak, streakText, almostComplete, isOnsite, onsiteStampedOn, dailyCount, readExifGPS, matchPhotoStamps, PHOTO_SLACK_METERS, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -1011,4 +1011,38 @@ test("判子の格（現地・写真）：source の無い古い判子と tap・
   assert.equal(stampedOn(visits, "a", new Date("2026-10-10T20:00:00")), true);
   assert.equal(shouldAutoStamp({ id: "a", lat: 35, lng: 135, radius: 50, lists: ["x"] }, [{ lat: 35, lng: 135, acc: 5, at: 0 }, { lat: 35, lng: 135, acc: 5, at: 200000 }], "walk", visits, new Date("2026-10-10T20:00:00")) === false, false);
   assert.equal(countryProgress(visits, spots.map((s) => ({ ...s, country: "日本" })), "日本").onsiteCount, 2);
+});
+
+test("続けた日数：現地の判子がある日を数える（今日まで・昨日まで）、今週は月曜はじまり", () => {
+  const day = (s, source) => ({ id: s, spotId: "a", at: new Date(s + "T12:00:00").getTime(), source });
+  const visits = [day("2026-10-12", "tap"), day("2026-10-13", "auto"), day("2026-10-14"), day("2026-10-09", "tap"), day("2026-10-15", "photo")];
+  const st = stampStreak(visits, new Date("2026-10-14T20:00:00")); // 水曜
+  assert.deepEqual(st, { streak: 3, doneToday: true, week: 3 });
+  assert.equal(streakText(st), "3日続けて押しています・今週3日");
+  const st2 = stampStreak(visits, new Date("2026-10-15T08:00:00")); // 写真の判子は数えない：今日はまだ、昨日まで3日
+  assert.deepEqual(st2, { streak: 3, doneToday: false, week: 3 });
+  assert.equal(streakText(st2), "3日続けて押しています（今日はまだ）・今週3日");
+  assert.equal(streakText(stampStreak([], new Date("2026-10-15T08:00:00"))), "今日はまだ");
+  assert.equal(streakText(stampStreak([day("2026-10-15", "tap")], new Date("2026-10-15T08:00:00"))), "今日は押しました・今週1日");
+  assert.equal(stampStreak([day("2026-10-12", "tap")], new Date("2026-10-15T08:00:00")).streak, 0); // 昨日押していなければ途切れ
+});
+
+test("あと少しで埋まる一覧：残り1〜3マスの一覧と、県ごとの名城などあと1つ。座標のないマスが残る一覧は出さない", () => {
+  const cell = (id, pref, got, hasCoord = true) => ({ id, name: id, pref, got, hasCoord });
+  const mk = (n, gotN, pref = "兵庫県") => Array.from({ length: n }, (_, i) => cell("c" + i, i < n / 2 ? "兵庫県" : "大阪府", i < gotN));
+  const lists = [
+    { key: "meijo100", name: "日本100名城", cells: mk(100, 98) },
+    { key: "zokumeijo", name: "続日本100名城", cells: mk(100, 50) },
+    { key: "meisui", name: "名水百選（昭和）", cells: [...mk(20, 18), cell("x", "京都府", false, false)].slice(0, 20).map((c, i) => (i === 19 ? cell("nc", "京都府", false, false) : c)) },
+    { key: "tiny", name: "小さな一覧", cells: mk(5, 4) },
+  ];
+  const r = almostComplete(lists);
+  assert.equal(r[0].kind, "list"); assert.equal(r[0].label, "日本100名城"); assert.equal(r[0].remaining.length, 2);
+  assert.ok(!r.some((x) => x.key === "meisui" && x.kind === "list"), "座標のないマスが残る一覧は出さない");
+  assert.ok(!r.some((x) => x.key === "tiny"), "小さな一覧は出さない");
+  // 県ごと：続日本100名城は兵庫県が 50 マス中 50 埋まり…ではなく、残りが1つの県だけ
+  const pl = [{ key: "zokumeijo", name: "続日本100名城", cells: [cell("a", "岡山県", true), cell("b", "岡山県", false), cell("c", "広島県", false), cell("d", "広島県", false), ...Array.from({ length: 20 }, (_, i) => cell("z" + i, "愛知県", i < 10))] }];
+  const pr = almostComplete(pl);
+  assert.deepEqual(pr.map((x) => x.label), ["岡山県の続日本100名城"]);
+  assert.equal(pr[0].remaining[0].id, "b");
 });

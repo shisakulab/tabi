@@ -446,3 +446,14 @@ button.pref { background: transparent; font-family: inherit; cursor: pointer; }
 .masu.photoonly { opacity: .55; }
 .helpq { margin: 0 0 8px; font-size: 13px; }
 .helpq summary { cursor: pointer; color: var(--ink2, #555); }
+.qstreak { font-size: 12px; color: var(--ink2, #555); margin: 2px 0 0; }
+.almost { margin: 0 0 10px; }
+.almostrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 0; font-size: 13px; }
+.almostrow .ar { display: flex; flex-wrap: wrap; gap: 4px; }
+.kanseimark { margin-left: 6px; padding: 0 5px; border: 2px solid var(--seal, #b8423a); color: var(--seal, #b8423a); border-radius: 4px; font-size: 12px; font-weight: 700; transform: rotate(-6deg); display: inline-block; }
+.fills { list-style: none; padding: 0; margin: 4px 0 10px; text-align: center; font-size: 14px; }
+.kansei { width: 120px; height: 120px; margin: 6px auto 8px; border: 5px double var(--seal, #b8423a); border-radius: 50%; color: var(--seal, #b8423a); display: grid; place-content: center; text-align: center; transform: rotate(-10deg); animation: kanseipop .7s cubic-bezier(.2,1.6,.4,1) both; }
+.kansei span { font-size: 38px; font-weight: 800; letter-spacing: 2px; line-height: 1; }
+.kansei small { font-size: 11px; margin-top: 4px; max-width: 96px; }
+@keyframes kanseipop { from { transform: scale(2.2) rotate(-30deg); opacity: 0; } to { transform: scale(1) rotate(-10deg); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .kansei { animation: none; } }

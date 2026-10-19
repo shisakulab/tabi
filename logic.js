@@ -928,3 +928,43 @@ export function shiftDay(date, n) {
 
 // 写真1枚を見分ける鍵（スキップした写真を次から出さないため）。ファイル名・大きさ・更新日時
 export const photoKey = (f) => `${(f && f.name) || ''}|${(f && f.size) || 0}|${(f && f.lastModified) || 0}`;
+
+// ---------- 続けた日数・あと少しで埋まる一覧 ----------
+// 現地の判子がある日を数える。今日押していれば今日まで、まだなら昨日までの連続日数。week は今週（月曜はじまり）の日数
+export function stampStreak(visits, date = new Date()) {
+  const days = new Set((visits || []).filter(isOnsite).map((v) => todayStr(new Date(v.at))));
+  const today = todayStr(date);
+  const doneToday = days.has(today);
+  let cur = doneToday ? today : shiftDay(today, -1);
+  let streak = 0;
+  while (days.has(cur)) { streak++; cur = shiftDay(cur, -1); }
+  const dow = (new Date(`${today}T12:00:00`).getDay() + 6) % 7;
+  let week = 0;
+  for (let i = 0; i <= dow; i++) if (days.has(shiftDay(today, -i))) week++;
+  return { streak, doneToday, week };
+}
+export function streakText(st) {
+  const weekPart = st.week ? `今週${st.week}日` : '';
+  const head = st.doneToday ? (st.streak >= 2 ? `${st.streak}日続けて押しています` : '今日は押しました') : st.streak >= 1 ? `${st.streak}日続けて押しています（今日はまだ）` : '今日はまだ';
+  return [head, weekPart].filter(Boolean).join('・');
+}
+// あと少しで埋まる一覧：lists＝[{ key, name, cells:[{ id, name, pref, got, hasCoord }] }]。
+// 一覧ぜんたいで残り1〜3マス（座標のないマスが残る一覧は除く）と、都道府県ごとの名城などあと1つ（その県に2マス以上あり、1つ以上は埋まっている）。少ない順
+export const ALMOST_PREF_LISTS = ['meijo100', 'zokumeijo', 'judenken', 'kokuho', 'meisui', 'heisei', 'taki100', 'tanada', 'ichinomiya', 'shiseki', 'meisho'];
+export function almostComplete(lists, limit = 8) {
+  const out = [];
+  for (const l of lists) {
+    const total = l.cells.length;
+    const rest = l.cells.filter((c) => !c.got);
+    if (total >= 10 && rest.length >= 1 && rest.length <= 3 && rest.every((c) => c.hasCoord !== false)) out.push({ kind: 'list', key: l.key, label: l.name, remaining: rest, count: total - rest.length, total });
+    if (!ALMOST_PREF_LISTS.includes(l.key)) continue;
+    const byPref = new Map();
+    for (const c of l.cells) { if (!c.pref) continue; if (!byPref.has(c.pref)) byPref.set(c.pref, []); byPref.get(c.pref).push(c); }
+    for (const [pref, cells] of byPref) {
+      const left = cells.filter((c) => !c.got);
+      if (cells.length >= 2 && left.length === 1 && left.length < cells.length && left[0].hasCoord !== false && rest.length > 3) out.push({ kind: 'pref', key: l.key, pref, label: `${pref}の${l.name}`, remaining: left, count: cells.length - 1, total: cells.length });
+    }
+  }
+  out.sort((a, b) => a.remaining.length - b.remaining.length || (a.kind === 'list' ? -1 : 1) - (b.kind === 'list' ? -1 : 1) || b.total - a.total);
+  return out.slice(0, limit);
+}
