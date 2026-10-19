@@ -923,3 +923,12 @@ test("一覧：名水百選は昭和と平成の2つ、続日本100名城・日�
   assert.ok(by.zokumeijo.items.filter((i) => i[3]).length >= 95);
   assert.equal(markKindOf({ name: "x", lists: ["heisei"] }), "water");
 });
+
+test("判子と印の呼び分け：初回の説明と印の記録画面に違いを書き、「通った印」は「通った跡」に", () => {
+  const app = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(app, /判子と印はちがいます。判子＝行った場所の近くで、アプリが押すもの。印＝御朱印・御城印・鉄印/);
+  assert.match(app, /判子は行った場所でアプリが押すものなので、ここでは押しません/);
+  assert.ok(!/通った印/.test(app), "通った印の言い方は残さない");
+  assert.match(html, /もらった印・写真を記録する/);
+});

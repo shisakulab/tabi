@@ -879,7 +879,7 @@ function diaryBtn(spotId, style = '') {
   return h('button', { class: 'btn diarybtn', type: 'button', style, onclick: () => openDiaryOn(d) }, `日記 ${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`);
 }
 // ---------- 記録の取り消し・写真の追加 ----------
-// 自分で付けたもの（判子・印と写真とメモ・ご当地の「食べた」・通った印）は、日記のその日の詳細と場所の詳細（カード・ポップアップ）から1件ずつ取り消せる（確認は1回）。
+// 自分で付けたもの（判子・印と写真とメモ・ご当地の「食べた」・通った跡）は、日記のその日の詳細と場所の詳細（カード・ポップアップ）から1件ずつ取り消せる（確認は1回）。
 // 判子には、あとから写真（複数可）を付けられる。付けた写真は印（写真・メモ）の記録になり、帳面のマス・カレンダー・地図・ビューアに出る
 const MINI_BTN = 'min-height:32px;padding:0 10px;font-size:13px';
 async function recordsChanged(reopen) {
@@ -920,11 +920,11 @@ async function deleteMealAny(m, reopen) {
 }
 async function undoPassed(spotId, reopen) {
   const s = spotById(spotId);
-  if (!confirm(`${s ? s.name : 'この場所'}の「通った」印を取り消しますか？`)) return;
+  if (!confirm(`${s ? s.name : 'この場所'}の「通った跡」を取り消しますか？`)) return;
   delete passed()[spotId]; delete passedCnt()[spotId]; delete passedPos()[spotId];
   savePassed();
   await recordsChanged(reopen);
-  toast('「通った」印を取り消しました');
+  toast('「通った跡」を取り消しました');
 }
 // 押した判子に、あとから写真を付ける（複数可）。1枚ごとに印（写真・メモ）の記録にして、その判子とつなぐ
 async function addPhotosToVisit(v, reopen) {
@@ -975,7 +975,7 @@ function visitRecordRow(v, reopen) {
       h('button', { class: 'btn', type: 'button', style: MINI_BTN, onclick: () => addPhotosToVisit(v, reopen) }, '写真を追加'),
       h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteVisit(v, reopen) }, '取り消す')));
 }
-// 場所の詳細（カード・ポップアップ）の「この場所の記録」：判子・印と写真・ご当地・通った印を1件ずつ
+// 場所の詳細（カード・ポップアップ）の「この場所の記録」：判子・印と写真・ご当地・通った跡を1件ずつ
 function placeRecordsEl(spotId, reopen) {
   const visits = [...visitsOf(spotId)].sort((a, b) => b.at - a.at);
   const seals = state.seals.filter((s) => s.spotId === spotId).sort((a, b) => (a.at < b.at ? 1 : -1));
@@ -983,12 +983,12 @@ function placeRecordsEl(spotId, reopen) {
   const pass = passed()[spotId] ? passCountOf(spotId) || 1 : 0;
   if (!visits.length && !seals.length && !meals.length && !pass) return null;
   return h('details', { class: 'placerec' },
-    h('summary', {}, `この場所の記録（判子 ${visits.length}・印と写真 ${seals.length}${meals.length ? `・ご当地 ${meals.length}` : ''}${pass ? '・通った' : ''}）`),
+    h('summary', {}, `この場所の記録（判子 ${visits.length}・もらった印と写真 ${seals.length}${meals.length ? `・ご当地 ${meals.length}` : ''}${pass ? '・通った' : ''}）`),
     visits.map((v) => visitRecordRow(v, reopen)),
     seals.map((s) => h('div', { style: 'margin-top:6px' }, sealRow(s, true, reopen))),
     meals.map((m) => h('div', { class: 'vrec' }, h('span', {}, `${m.at}　ご当地 ${m.name}`),
       h('span', { class: 'vbtns' }, h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => deleteMealAny(m, reopen) }, '取り消す')))),
-    pass ? h('div', { class: 'vrec' }, h('span', {}, `通った印（${pass}回）`),
+    pass ? h('div', { class: 'vrec' }, h('span', {}, `通った跡（${pass}回）`),
       h('span', { class: 'vbtns' }, h('button', { class: 'btn danger', type: 'button', style: MINI_BTN, onclick: () => undoPassed(spotId, reopen) }, '取り消す'))) : null);
 }
 function showCard(spot) {
@@ -1153,9 +1153,9 @@ function openStamped(spot, season) {
   showSheet(null, [
     h('h2', { style: 'font-size:22px;text-align:center;margin:0 0 4px' }, season ? `季節の判子（${season.label}）` : '判子を押しました'),
     h('p', { class: 'sub', style: 'text-align:center' }, `${spot.name}（${n}回目）`),
-    h('p', { style: 'text-align:center;margin:8px 0 14px' }, '写真とひとこと、御朱印などの印を残せます。'),
+    h('p', { style: 'text-align:center;margin:8px 0 14px' }, 'もらった御朱印・御城印などの印（紙やカード）は、写真で残せます。写真とひとことだけでもOK。'),
     h('div', { style: 'display:flex;gap:8px;justify-content:center' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, sealTypeFor(spot) ? '印・写真を記録する' : '写真・メモを残す'),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => { recordDraft.spotId = spot.id; openRecord(); } }, sealTypeFor(spot) ? 'もらった印・写真を記録' : '写真・メモを残す'),
       h('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'あとで')),
     h('div', { style: 'display:flex;gap:8px;justify-content:center;margin-top:8px' },
       h('button', { class: 'btn', type: 'button', onclick: () => { const v = [...visitsOf(spot.id)].sort((a, b) => b.at - a.at)[0]; if (v) addPhotosToVisit(v, () => openStamped(spot, season)); } }, '写真を追加'),
@@ -1494,7 +1494,7 @@ function drawNear(best) {
     nearSig = '';
     nearEl.replaceChildren(...[
       h('div', { class: 'nearmain' }, h('span', { class: 'nt', style: 'white-space:normal' }, note.msg)),
-      h('button', { class: 'nearpush', type: 'button', onclick: () => { recordDraft.spotId = note.spot.id; openRecord(); } }, sealTypeFor(note.spot) ? '印を記録' : '写真・メモ'),
+      h('button', { class: 'nearpush', type: 'button', onclick: () => { recordDraft.spotId = note.spot.id; openRecord(); } }, sealTypeFor(note.spot) ? 'もらった印を記録' : '写真・メモ'),
       h('button', { class: 'nearpush', type: 'button', onclick: () => undoAuto(note) }, '取り消す')].filter(Boolean));
     nearEl.hidden = false;
     document.body.classList.add('hasnear');
@@ -1975,7 +1975,7 @@ function bookPrefs() {
   for (let r = 0; r <= 13; r++) { if (r !== 12) rows.push(...cells.slice(r * 10, r * 10 + 10)); }
   const visited = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   return [
-    h('p', { class: 'sub' }, `判子・印・ご当地グルメのある都道府県：${visited.length} / 47`),
+    h('p', { class: 'sub' }, `判子・もらった印・ご当地グルメのある都道府県：${visited.length} / 47`),
     h('div', { class: 'prefgrid' }, rows),
     visited.length ? h('div', { class: 'spotlist' }, visited.map(([p, n]) => h('div', { class: 'row' }, h('span', {}, p), h('span', { class: 'muted' }, `${n}`)))) : h('p', { class: 'muted' }, 'まだありません'),
   ];
@@ -2128,11 +2128,11 @@ function openSettings() {
     h('h2', { style: 'font-size:20px;margin:0 0 4px' }, '設定 ', verEl()),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
-      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から通った印')),
+      h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から通った跡')),
     h('div', { class: 'setrow' },
       h('button', { class: 'btn', type: 'button', onclick: async () => { await db.setSetting('skippedPhotos', []); toast('スキップした写真を、次の取り込みからまた出します'); } }, 'スキップした写真をもう一度見る')),
     h('div', { class: 'setrow' },
-      h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・印・写真）'),
+      h('button', { class: 'btn', type: 'button', onclick: exportData }, '書き出す（判子・もらった印・写真）'),
       h('label', { class: 'btn', style: 'display:grid;place-items:center;cursor:pointer' }, '読み込む',
         h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: importData })),
       h('button', { class: 'btn danger', type: 'button', onclick: wipe }, '全部消す')),
@@ -2407,7 +2407,7 @@ function openRecord() {
   } }, '記録する');
   showSheet(null, [h('div', { class: 'form' },
     h('h2', { style: 'font-size:20px' }, '記録する'),
-    h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。御朱印などの印をいただいたら、種類を選んでください。'),
+    h('p', { class: 'sub', style: 'margin:0' }, '写真とひとことだけでも残せます。現地でもらった印（御朱印・御城印・鉄印・ダムカードなどの紙やカード）は、種類を選んで写真で記録します。判子は行った場所でアプリが押すものなので、ここでは押しません。'),
     h('div', { style: 'display:flex;gap:8px' },
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickPhotosForImport(); } }, '写真からまとめて判子'),
       h('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); pickGpxForImport(); } }, '経路（GPX）から')),
@@ -2656,7 +2656,7 @@ function showImportSheet(title, text, importId, pendingBtn = null) {
 // Strava・ヘルスケアの経路などの GPX を選ぶ→近くを通った場所に「通った」の印を付ける。判子は押さない（写真からの取り込みとは違い、通りかかっただけの場所が多いため）
 function pickGpxForImport() {
   showSheet(null, [
-    h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '経路（GPX）から通った印'),
+    h('h2', { style: 'font-size:20px;margin:0 0 8px' }, '経路（GPX）から通った跡'),
     h('p', { class: 'sub', style: 'margin:0 0 8px' }, 'GPX は、歩いた・走った道すじを記録したファイルです。道すじの近くの場所に「通った」の印（地図で実線の枠）を付けます。判子は押しません（判子は、その場で押すか、写真から付けます）。先に別のアプリから書き出して、iPhone の「ファイル」に保存しておく必要があります。'),
     h('ul', { class: 'welcome' },
       h('li', {}, 'Strava：パソコンのブラウザで strava.com を開き、アクティビティの「…」→「GPX をエクスポート」'),
@@ -2771,7 +2771,7 @@ async function importData(e) {
   } catch (err) { toast('読み込めませんでした：' + (err && err.message ? err.message : err)); }
 }
 async function wipe() {
-  if (!confirm('判子・印・写真をすべて消します。元に戻せません。よろしいですか？')) return;
+  if (!confirm('判子・もらった印・写真をすべて消します。元に戻せません。よろしいですか？')) return;
   if (!confirm('本当に全部消しますか？（先に書き出しておくと安心です）')) return;
   await db.clearAll();
   dropPhotoCache();
@@ -2793,7 +2793,7 @@ function openWelcome(done) {
       h('li', {}, '見頃の月に押すと、絵柄と色が変わる「季節の判子」になります。上のお題は、散歩・サイクリングでは毎日変わる「今日のお題」、旅行ではいま見頃の名所を集めた「今月のお題」です。'),
       h('li', {}, '判子の色は、赤＝いま見頃の名所（季節の判子）、紺＝世界遺産・国宝・名勝・史跡・観光地などの名所、茶＝道の駅、緑＝近所の神社・お寺・温泉・喫茶店など。点線＝まだ、実線の枠＝通った、塗りつぶし＝判子を押した。'),
       h('li', {}, '上の「散歩・サイクリング・旅行」で、今日の旅のしかたを選ぶと、範囲と場所の種類が変わります。散歩・サイクリングは回って戻ると約30分（設定で15・60分にも）のお題、旅行は世界の見頃の名所のお題になります。'),
-      h('li', {}, '御朱印などは「＋」から、参拝の記録として写真つきで残せます。'),
+      h('li', {}, '判子と印はちがいます。判子＝行った場所の近くで、アプリが押すもの。印＝御朱印・御城印・鉄印・ダムカードなど、現地でもらう紙やカードのこと。印は「＋」から、写真つきで記録します（判子は押されません）。'),
       h('li', {}, '位置情報は、近くの場所を知らせて判子を押すためだけに使います。記録も位置も、この端末の中にだけ保存し、外には送りません（地図の画像は国土地理院から読み込みます）。'),
       isStandalone() ? null : h('li', {}, 'ホーム画面に追加すると、アプリのように開けて、データも消えにくくなります。')),
     h('button', { class: 'btn primary', type: 'button', style: 'width:100%;margin-top:8px', onclick: finish }, 'はじめる'),
