@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { tileKey, distanceMeters } from '../logic.js';
 import { loadNamesJa, jaName, jaDesc } from './names-ja.mjs';
+import { worldNearRows } from './build-world-near.mjs';
 const NAMES_JA = loadNamesJa();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -559,6 +560,13 @@ async function main() {
     if (refresh || !existsSync(path.join(CACHE, `osm-JP-${String(i + 2).padStart(2, '0')}-bath.json`))) await sleep(5000);
   }
   counts.near = nearCounts;
+  // 海外100都市の近所の場所（tools/build-world-near.mjs --fetch で取ったキャッシュから。キャッシュが無い都市は入らない）
+  if (!process.argv.includes('--no-osm')) {
+    const wn = await worldNearRows();
+    for (const r of wn.rows) if (!spots.has(r[0])) spots.set(r[0], r);
+    counts.nearWorld = wn.perKind;
+    console.log(`海外の近所の場所: ${wn.rows.length} 件（${Object.keys(wn.perCity).length} 都市）${wn.missing.length ? '、キャッシュなし：' + wn.missing.join('・') : ''}`);
+  }
   // 区画ごとに書く（古いファイルは消す）
   for (const f of await readdir(path.join(OUT, 'spots'))) await rm(path.join(OUT, 'spots', f));
   const tiles = new Map();
@@ -572,7 +580,7 @@ async function main() {
     generatedAt: new Date().toISOString(), source: 'Wikidata (CC0), OpenStreetMap contributors (ODbL)', spots: spots.size, tiles: [...tiles.keys()].sort(), counts,
     // 区画ごとの件数 [一覧の場所, 近所の場所]。地図を引いたとき、区画を読まずに数だけ出すのに使う
     tileCounts: Object.fromEntries([...tiles].map(([k, l]) => [k, [l.filter((s) => s[5] !== 'near').length, l.filter((s) => s[5] === 'near').length]])),
-    shape: '[id, kind, name, lat, lng, tier, radius, lists, pref, country]',
+    shape: '[id, kind, name, lat, lng, tier, radius, lists, pref, country, orig?]',
   }));
   // lists.json：items は [id, 名前, 都道府県, 座標あり(1/0), 国, 緯度, 経度（座標があるときだけ）]。aliases は国宝をまとめたことで変わった spotId（子 id → 親 id）。古い判子を救うのに使う
   await writeFile(path.join(OUT, 'lists.json'), JSON.stringify({ lists: listsOut, aliases: kokuhoAliases }));

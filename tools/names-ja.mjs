@@ -3,14 +3,17 @@
 //   desc ：{ <英語の説明文>: <日本語> }
 //   wd   ：Wikidata で日本語名を探し終えた id（探し直さないため）
 // 作り方は tools/build-names-ja.mjs
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 export const NAMES_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'names-ja.json');
 export const hasJa = (s) => /[ぁ-んァ-ン一-龥]/.test(s || '');
 export function loadNamesJa() {
-  try { const j = JSON.parse(readFileSync(NAMES_FILE, 'utf8')); return { names: j.names || {}, desc: j.desc || {}, wd: j.wd || [] }; } catch { return { names: {}, desc: {}, wd: [] }; }
+  // ファイルが無いときだけ空にする。壊れていたら止める（空として扱って上書きすると、訳をなくしてしまう）
+  if (!existsSync(NAMES_FILE)) return { names: {}, desc: {}, wd: [] };
+  const j = JSON.parse(readFileSync(NAMES_FILE, 'utf8'));
+  return { names: j.names || {}, desc: j.desc || {}, wd: j.wd || [] };
 }
 // 名前が英語（元の名前）のままなら日本語名にする。すでに日本語なら変えない。{ name, orig }（orig は置き換えたときの元の名前、無ければ ''）
 export function jaName(tables, id, name) {

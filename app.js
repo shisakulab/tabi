@@ -1,7 +1,7 @@
 import seasonThemes from './themes/seasons.js';
 import * as db from './db.js';
 import {
-  todayStr, dailyCount, distanceMeters, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
+  todayStr, dailyCount, distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canStamp, stampedOn, fitSize,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, monthlyQuests, dailyQuests, pickNear, bestLoop, listProgress, prefsVisited, countryProgress, countriesOf, countriesVisited, groupByDay, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, readExifGPS, findTiffStart, exifSummary, matchPhotoStamps, PHOTO_SLACK_METERS, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits, remapVisits, classifyFood, normalizeName,
   MODES, normalizeMode, festivalSpot, addTrack, LOOP_TARGET, LOOP_SPEED_KMH, LOOP_MINUTE_CHOICES, NEAR_KINDS, PREFS, NEAR_METERS, DAILY_MODES, STEP_METERS, MEMO_TYPE,
@@ -247,7 +247,7 @@ function loadTile(key) {
       .catch(() => null) // 通信の失敗は覚えない
       .then((list) => {
         tilePending.delete(key);
-        if (list) tiles.set(key, list.map(([id, kind, name, lat, lng, tier, radius, lists, pref, country]) => ({ id, kind, name, lat, lng, tier, radius, lists, pref, country })));
+        if (list) tiles.set(key, list.map(([id, kind, name, lat, lng, tier, radius, lists, pref, country, orig]) => ({ id, kind, name, lat, lng, tier, radius, lists, pref, country: COUNTRY_ALIAS[country] || country, ...(orig ? { en: orig } : {}) })));
       }));
   }
   return tilePending.get(key);
@@ -475,6 +475,9 @@ const KIND_SVG = (() => {
     sight: s('M6 21V4M6 5h11l-2.5 3.5L17 12H6'),
     view: s('M2.5 18h19M6.5 18a5.5 5.5 0 0 1 11 0M12 6v3M4.5 9 6.5 11M19.5 9 17.5 11'),
     water: s('M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z'),
+    church: s('M12 2v5M9.5 4h5M6 21V12l6-4.5 6 4.5v9M3 21h18M10 21v-5h4v5'),
+    mosque: s('M12 2v2.5M5 21V12M19 21V12M5 12a7 7 0 0 1 14 0M3 21h18M10 21v-4a2 2 0 0 1 4 0v4M5 9V5M19 9V5'),
+    synagogue: s('M12 3l7.5 13h-15zM12 21 4.5 8h15z'),
     festival: s('M9 3h6M8.5 5h7c2.2 2.5 2.2 11.5 0 14h-7c-2.2-2.5-2.2-11.5 0-14zM9.5 19.5h5M12 19.5V22M7.8 9h8.4M7.8 14.5h8.4'),
     pin: s('M12 21s-6-6-6-11a6 6 0 0 1 12 0c0 5-6 11-6 11zM12 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'),
   };
@@ -708,7 +711,10 @@ async function spotInfoOf(id) {
 const commonsFileOf = (thumbUrl) => { const p = thumbUrl.slice(COMMONS_THUMB.length).split('/'); try { return decodeURIComponent(p[0] === 'thumb' ? p[3] : p[2]); } catch { return ''; } };
 // 写真・作者・ライセンスと説明。データに無い場所・読めない場所は何も出さない（あとから埋める）
 // 日本語に訳した名前の、元の名前（英語など）。訳していなければ空
-function origNameOf(id) { return (state.origNames && (state.origNames.get(id) || state.origNames.get(String(id).replace(/^f_/, '')))) || ''; }
+function origNameOf(id) {
+  const s = spotById(id);
+  return (s && s.en) || (state.origNames && (state.origNames.get(id) || state.origNames.get(String(id).replace(/^f_/, '')))) || '';
+}
 function origNameEl(id, name) {
   const o = origNameOf(id);
   return o && o !== name ? h('div', { class: 'muted', style: 'font-size:12px;margin:0 0 2px;word-break:break-word' }, o) : null;
@@ -1544,7 +1550,16 @@ function nearAlertNote() {
 }
 
 // ---------- 帳面 ----------
+let bookTilesBusy = false;
+function loadVisitTiles() {
+  if (bookTilesBusy) return;
+  const keys = [...new Set(state.visits.filter((v) => Number.isFinite(v.lat) && Number.isFinite(v.lng)).map((v) => tileKey(v.lat, v.lng)))].filter((k) => !tiles.has(k));
+  if (!keys.length) return;
+  bookTilesBusy = true;
+  ensureTiles(keys).then(() => { bookTilesBusy = false; if (!sheetEl.hidden && !masuDetail) openBook(); });
+}
 function openBook() {
+  loadVisitTiles();
   const tabs = [['spots', '名所'], ['foods', 'ご当地'], ['prefs', '都道府県'], ['countries', '国']];
   const body = state.tab === 'foods' ? bookFoods() : state.tab === 'prefs' ? bookPrefs() : state.tab === 'countries' ? bookCountries() : bookSpots();
   showSheet(openBook, [
@@ -1675,12 +1690,12 @@ function masuCell(c, color, isSeason) {
 }
 
 // 一覧に入っていない近所の場所（神社・お寺・喫茶店など）で押した判子を、種類ごとに出す
-function nearSealsSection() {
+function nearSealsSection(country) {
   const seen = new Map();
   for (const v of state.visits) {
     if (seen.has(v.spotId)) continue;
     const s = spotById(v.spotId);
-    if (s && s.tier === 'near' && NEAR_KINDS[s.kind]) seen.set(v.spotId, s);
+    if (s && s.tier === 'near' && NEAR_KINDS[s.kind] && (!country || (s.country || '日本') === country)) seen.set(v.spotId, s);
   }
   if (!seen.size) return null;
   const byKind = new Map();
@@ -1967,6 +1982,12 @@ function bookPrefs() {
 }
 
 // 世界に広がる一覧（今は世界遺産だけ）の場所。国ごとの帳面はこの中だけで見せる（日本だけの一覧は都道府県の帳面にすでにある）
+// 判子を押した「近所の場所」（区画を読んであるもの）。海外の街の場所は、国ごとの数え方に入れる（入れないと日本に数えられる）
+function visitedNearSpots() {
+  const out = [];
+  for (const id of new Set(state.visits.map((v) => v.spotId))) { const s = spotById(id); if (s && s.tier === 'near') out.push(s); }
+  return out;
+}
 function globalSpots() {
   const keys = new Set(state.lists.filter((l) => l.global).map((l) => l.key));
   return allListSpots().filter((s) => (s.lists || []).some((k) => keys.has(k)));
@@ -1999,6 +2020,7 @@ function bookCountryDetail(country) {
       h('div', { class: 'masus' }, cells.map((c) => masuCell(c, TIER_COLOR.list, false))));
   }).filter(Boolean);
   const best = countryBestMonths(spots, country);
+  const nearHere = nearSealsSection(country); // この国の街で押した判子（教会・喫茶店など）
   const wf = worldFoodsOf(country);
   if (wf.length) {
     const gotF = wf.filter((f) => mealsFor(f).length > 0).length;
@@ -2013,7 +2035,8 @@ function bookCountryDetail(country) {
       h('button', { class: 'btn', type: 'button', onclick: () => { countryDetail = null; masuDetail = null; openBook(); } }, '‹ 国'),
       h('h3', { style: 'margin:0;font-size:20px' }, country)),
     best ? h('p', { class: 'muted', style: 'margin:0 0 8px' }, `世界遺産のベストシーズン ${best}`) : null,
-    sections.length ? h('div', { class: 'listgroups' }, sections) : h('p', { class: 'muted' }, 'この国の場所はまだありません'),
+    sections.length ? h('div', { class: 'listgroups' }, sections) : nearHere ? null : h('p', { class: 'muted' }, 'この国の場所はまだありません'),
+    nearHere,
   ];
 }
 // 世界地図：国の形を塗る（行った国は濃く、世界遺産のある国は薄く、ない国は灰色）。国を押すとその国へ。
@@ -2052,8 +2075,9 @@ function worldFoodsOf(country) { return state.worldFoods.filter((f) => f.country
 function bookCountries() {
   if (countryDetail) return bookCountryDetail(countryDetail);
   const spots = globalSpots();
-  const counts = countriesVisited(state.visits, spots);
-  const countries = [...new Set([...countriesOf(spots), ...state.worldFoods.map((f) => f.country)])].sort((a, b) => {
+  const withNear = [...spots, ...visitedNearSpots()];
+  const counts = countriesVisited(state.visits, withNear);
+  const countries = [...new Set([...countriesOf(withNear), ...state.worldFoods.map((f) => f.country)])].sort((a, b) => {
     const d = (counts[b] || 0) - (counts[a] || 0);
     if (d) return d;
     if (a === '日本') return -1;

@@ -114,7 +114,7 @@ export function normalizeName(s) {
 // ---------- 場所の種類と旅のしかた ----------
 // 場所は「一覧に入っている場所」（tier: 'list'。世界遺産・百選・季節の名所など）と「近所の場所」（tier: 'near'。OSM の温泉・銭湯・神社・お寺）の2つ
 // 灯台も OSM から取るが、遠くから目当てに行く場所なので tier は 'list'
-export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台', museum: '博物館・記念館', sight: '名所', viewpoint: '展望', bakery: 'パン屋', cafe: '喫茶店', teishoku: '定食屋' };
+export const NEAR_KINDS = { onsen: '温泉', sento: '銭湯', shrine: '神社', temple: 'お寺', lighthouse: '灯台', museum: '博物館・記念館', sight: '名所', viewpoint: '展望', bakery: 'パン屋', cafe: '喫茶店', teishoku: '定食屋', church: '教会', mosque: 'モスク', synagogue: 'シナゴーグ', hindu: 'ヒンドゥー寺院' };
 // 旅のしかたは3つ（2026-10-14 に 徒歩・自転車・車・電車・飛行機 から分け直した）
 export const MODES = {
   walk: { label: '散歩', range: 2000 },
@@ -252,7 +252,7 @@ export const KIND_DUP_PENALTY = 600; // m 相当
 export const CATEGORY_DUP_PENALTY = 2500; // m 相当。分類が重なるのは、道のりが多少ずれるより避けたい
 // 今日のお題は「ご飯」「寺社」「その他」から1つずつ出す
 const FOOD_KINDS = ['cafe', 'bakery', 'teishoku'];
-const SACRED_KINDS = ['shrine', 'temple'];
+const SACRED_KINDS = ['shrine', 'temple', 'church', 'mosque', 'synagogue', 'hindu'];
 export function questCategory(spot) {
   if (FOOD_KINDS.includes(spot.kind)) return 'food';
   if (SACRED_KINDS.includes(spot.kind)) return 'sacred';
@@ -858,7 +858,7 @@ export function festivalSpot([qid, name, lat, lng, months, country, pref, flags,
 }
 
 // 地図の点に出す、場所の種類のマーク。神社＝shrine（鳥居）・お寺＝temple（卍）・飲食＝food（ナイフとフォーク）・ほか
-const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', foodshop: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view', festival: 'festival' };
+const KIND_MARK = { shrine: 'shrine', temple: 'temple', teishoku: 'food', foodshop: 'food', cafe: 'food', bakery: 'food', onsen: 'onsen', sento: 'onsen', lighthouse: 'lighthouse', museum: 'museum', sight: 'sight', viewpoint: 'view', festival: 'festival', church: 'church', mosque: 'mosque', synagogue: 'synagogue', hindu: 'temple' };
 export function markKindOf(spot) {
   if (!spot) return 'pin';
   if (KIND_MARK[spot.kind]) return KIND_MARK[spot.kind];

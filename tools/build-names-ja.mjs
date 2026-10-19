@@ -10,7 +10,7 @@
 //     固有名詞はカタカナ、一般名詞は訳す。結果は tools/names-ja.json に入れ、作り直しで毎回は訳さない
 //  4. 場所の説明文（data/photos/ の英語の説明）も同じ要領で訳す
 //  5. data/ に反映：lists.json・spots/（名前）、festivals.json、world-foods.json、photos/（説明）。元の名前は data/names-en.json（id → 元の名前）
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +48,7 @@ async function collect() {
   }
   // 海外の近所の場所（data/spots/ の tier=near で country が日本以外）の OSM 名は、OSM の name:ja を取ったあとの残りだけ extra に入る（tools/near-world-names.json）
   const extra = await readJson(path.join(root, 'tools', 'near-world-names.json'), {});
-  for (const [id, v] of Object.entries(extra)) if (!hasJa(v.name)) names.set(id, { name: v.name, kind: v.kind || 'place', country: v.country || '' });
+  for (const [id, v] of Object.entries(extra)) if (!hasJa(v.name)) names.set(id, { name: v.name, kind: v.kind || 'near', country: v.country || '', hint: v.hint || '' });
   for (const f of await readdir(path.join(DATA, 'photos'))) {
     const j = await readJson(path.join(DATA, 'photos', f), {});
     for (const v of Object.values(j)) if (v[3] && !hasJa(v[3])) descs.add(v[3]);
@@ -109,6 +109,7 @@ function claudeP(prompt, model) {
 const PROMPTS = {
   place: '次は海外の名所・世界遺産・史跡・施設などの名前（英語や現地語）と所在する国です。日本語の名前にしてください。',
   festival: '次は海外の祭り・行事の名前（英語や現地語）と国です。日本語の名前にしてください。',
+  near: '次は海外の街にある施設（教会・モスク・博物館・美術館・展望台・名所・パン屋・喫茶店など）の名前（現地語や英語）と国です。日本語の名前にしてください。店名は音をカタカナにし、一般名詞の部分（教会・博物館・カフェなど）は日本語にする。',
   dish: '次は海外の料理・食べ物の名前（英語や現地語）と国です。日本語での一般的な呼び名にしてください（知られていなければカタカナ）。',
   desc: '次は Wikidata の場所の短い説明文（英語）です。日本語の短い説明（名詞句。例「ドイツの大聖堂」「世界遺産の一部（ドイツ）」「イタリアの宮殿」）にしてください。',
 };
@@ -118,13 +119,24 @@ const RULES = `規則：
 - 原語の併記や括弧書きの注釈は付けない。長い名前も省略しない。
 - 記号・番号だけで意味のない名前（例：EC-CQ-09/CS-2011）はそのまま返す。
 - 入力と同じ長さ・同じ順番の JSON 配列（文字列だけ）だけを出力する。前後の説明やコードブロックは付けない。`;
+// 出力から最初の JSON 配列を取り出す（前後に説明が付いていてもよい）
+function extractArray(text) {
+  const start = text.indexOf('[');
+  if (start < 0) return null;
+  let depth = 0; let inStr = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true; else if (ch === '[') depth++; else if (ch === ']' && --depth === 0) { try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; } }
+  }
+  return null;
+}
 async function translateBatch(items, kind, model, depth = 0) {
-  const input = kind === 'desc' ? items : items.map((x) => `${x.name} ／ ${x.country}`);
+  const input = kind === 'desc' ? items : items.map((x) => `${x.name}${x.hint ? `（英語名：${x.hint}）` : ''} ／ ${x.country}`);
   const prompt = `${PROMPTS[kind]}\n${RULES}\n\n入力（JSON 配列、${input.length} 件）：\n${JSON.stringify(input)}\n`;
   try {
     const text = await claudeP(prompt, model);
-    const m = /\[[\s\S]*\]/.exec(text);
-    const arr = m ? JSON.parse(m[0]) : null;
+    const arr = extractArray(text);
     if (!Array.isArray(arr) || arr.length !== input.length || arr.some((s) => typeof s !== 'string')) throw new Error('形が合いません');
     return arr;
   } catch (e) {
@@ -142,9 +154,16 @@ async function runPool(jobs, n) {
   await Promise.all(Array.from({ length: n }, async () => { while (i < jobs.length) { const k = i++; await jobs[k](); } }));
 }
 
-async function save(tables) {
-  const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true })));
-  await writeFile(NAMES_FILE, JSON.stringify({ names: sortObj(tables.names), desc: sortObj(tables.desc), wd: [...new Set(tables.wd)].sort() }));
+// 並行する翻訳の保存が重ならないよう、1つずつ順に書く
+let saving = Promise.resolve();
+function save(tables) {
+  saving = saving.then(async () => {
+    const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true })));
+    // 書き込みの途中で止まっても壊れないよう、別のファイルに書いてから置き換える
+    await writeFile(NAMES_FILE + '.tmp', JSON.stringify({ names: sortObj(tables.names), desc: sortObj(tables.desc), wd: [...new Set(tables.wd)].sort() }));
+    await rename(NAMES_FILE + '.tmp', NAMES_FILE);
+  });
+  return saving;
 }
 
 // ---------- data/ に反映 ----------
@@ -170,6 +189,7 @@ async function applyAll(tables) {
     const text = await readFile(file, 'utf8');
     const tile = JSON.parse(text); let changed = false;
     for (const s of tile) {
+      if (s[5] === 'near') continue; // 海外の街の場所は tools/build-world-near.mjs が名前と元の名前（行の11番目）を入れる
       const r = jaName(tables, s[0], s[2]);
       if (r.orig) { s[2] = r.name; orig[s[0]] = r.orig; changed = true; n++; }
       else if (tables.names[s[0]] && hasJa(s[2]) && tables.names[s[0]][2] !== s[2]) orig[s[0]] = tables.names[s[0]][2];
@@ -234,13 +254,13 @@ async function main() {
     if (!NO_AI) {
       const rest = todo.filter(([id]) => !tables.names[id]);
       const BATCH = 70;
-      for (const kind of ['place', 'festival', 'dish']) {
+      for (const kind of ['place', 'festival', 'dish', 'near']) {
         const items = rest.filter(([, v]) => v.kind === kind);
         const jobs = [];
         for (let i = 0; i < items.length; i += BATCH) {
           const chunk = items.slice(i, i + BATCH);
           jobs.push(async () => {
-            const out = await translateBatch(chunk.map(([, v]) => v), kind, 'sonnet');
+            const out = await translateBatch(chunk.map(([, v]) => v), kind, kind === 'near' ? 'haiku' : 'sonnet'); // 街の施設名（数が多い）は haiku
             chunk.forEach(([id, v], k) => { if (hasJa(out[k])) tables.names[id] = [out[k].trim(), 'ai', v.name]; });
             console.log(`  ${kind}：${Math.min(i + BATCH, items.length)} / ${items.length}`);
             await save(tables);
@@ -268,4 +288,5 @@ async function main() {
   }
   await applyAll(tables);
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+import { pathToFileURL } from 'node:url';
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main().catch((e) => { console.error(e); process.exit(1); });

@@ -4,12 +4,14 @@ import {
   distanceMeters, tileKey, tilesForBounds, nearestSpot, bearingDeg, canCheckIn, canStamp, fitSize, todayStr, MODES,
   modeAllows, spotsForMode, seasonOf, formatBestMonths, majorityMonths, modesOfDay, wafuMonth, markKindOf, visitLevel, stampDatesOf, diaryRange, shiftDay, photoKey, normalizeMode, addTrack, monthlyQuests, dailyQuests, pickNear, bestLoop, questCategory, listProgress, prefsVisited, PREFS, countryProgress, countriesOf, countriesVisited, groupByDay, stampedOn, shouldRemindBackup,
   sealTypeFor, shouldAutoStamp, sealDraft, readExifDate, AUTO_DWELL_MS, remapVisits, classifyFood, normalizeName,
-  festivalSpot, dailyCount, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
+  festivalSpot, NEAR_KINDS, dailyCount, readExifGPS, matchPhotoStamps, monthGrid, shiftMonth, parseGpx, gpxStops, gpxDayDistances, matchGpxVisits,
 } from '../logic.js';
 import { dataURLToBlob } from '../db.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { CLOSED_SPOTS, dropClosed } from '../tools/build-spots.mjs';
 import { hasJa, jaName, jaDesc } from '../tools/names-ja.mjs';
+import { worldNearKind, pickCity, CITY_CAPS } from '../tools/build-world-near.mjs';
+import { CITIES } from '../tools/world-cities.mjs';
 import { shardOf, SHARDS } from '../tools/build-photos.mjs';
 import seasons from '../themes/seasons.js';
 
@@ -840,4 +842,70 @@ test("記録の取り消し・写真の追加：判子・ご当地・通った�
   }
   assert.ok((src.match(/placeRecordsEl\(/g) || []).length >= 3, "カードとポップアップに記録の一覧");
   assert.match(src, /addPhotosToVisit\(v, \(\) => openStamped/, "判子を押した直後のシートに写真を追加");
+});
+
+test('worldNearKind: 宗教施設は wikidata か heritage があるものだけ、チェーンの喫茶店は除く', () => {
+  assert.equal(worldNearKind({ name: 'Notre-Dame', amenity: 'place_of_worship', religion: 'christian', wikidata: 'Q1' }), 'church');
+  assert.equal(worldNearKind({ name: 'Local chapel', amenity: 'place_of_worship', religion: 'christian' }), null);
+  assert.equal(worldNearKind({ name: 'Old mosque', amenity: 'place_of_worship', religion: 'muslim', heritage: '2' }), 'mosque');
+  assert.equal(worldNearKind({ name: 'Synagogue', amenity: 'place_of_worship', religion: 'jewish', wikidata: 'Q2' }), 'synagogue');
+  assert.equal(worldNearKind({ name: 'Wat', amenity: 'place_of_worship', religion: 'buddhist', wikidata: 'Q3' }), 'temple');
+  assert.equal(worldNearKind({ name: 'Gurdwara', amenity: 'place_of_worship', religion: 'sikh', wikidata: 'Q4' }), null);
+  assert.equal(worldNearKind({ name: 'Louvre', tourism: 'museum' }), 'museum');
+  assert.equal(worldNearKind({ name: 'Gallery', tourism: 'gallery' }), null);
+  assert.equal(worldNearKind({ name: 'Gallery', tourism: 'gallery', wikidata: 'Q5' }), 'museum');
+  assert.equal(worldNearKind({ name: 'View', tourism: 'viewpoint' }), 'viewpoint');
+  assert.equal(worldNearKind({ name: 'Tower', tourism: 'attraction' }), null);
+  assert.equal(worldNearKind({ name: 'Tower', tourism: 'attraction', wikidata: 'Q6' }), 'sight');
+  assert.equal(worldNearKind({ name: 'Café de Flore', amenity: 'cafe' }), 'cafe');
+  assert.equal(worldNearKind({ name: 'Starbucks', amenity: 'cafe' }), null);
+  assert.equal(worldNearKind({ name: 'Some cafe', amenity: 'cafe', brand: 'X' }), null);
+  assert.equal(worldNearKind({ name: 'Boulangerie', shop: 'bakery' }), 'bakery');
+  assert.equal(worldNearKind({ amenity: 'cafe' }), null);
+  assert.equal(worldNearKind({ name: 'Bar', amenity: 'bar' }), null);
+});
+
+test('pickCity: 種類別の上限・二重登録の除去・範囲外の除外、wikidata があるものを先に', () => {
+  const city = ['x', 'テスト市', 'フランス', 48.0, 2.0];
+  const cafe = (id, name, dlat, tags = {}) => ({ id, type: 'node', lat: 48.0 + dlat, lon: 2.0, tags: { name, amenity: 'cafe', ...tags } });
+  const els = [];
+  for (let i = 0; i < 80; i++) els.push(cafe(i + 1, 'Cafe ' + i, 0.0001 * i));
+  els.push(cafe(500, 'Rich cafe', 0.02, { wikidata: 'Q9' }));
+  els.push(cafe(600, 'Cafe 1', 0.0001)); // 同じ名前・同じ場所の二重登録
+  els.push(cafe(700, 'Far cafe', 0.2)); // 5.5km より遠い
+  const out = pickCity(city, els);
+  assert.equal(out.length, CITY_CAPS.cafe);
+  assert.equal(out[0].name, 'Rich cafe');
+  assert.ok(!out.some((s) => s.name === 'Far cafe'));
+  assert.equal(out.filter((s) => s.name === 'Cafe 1').length, 1);
+});
+
+test('海外の近所の場所：100都市・上限、種類の名前とマーク', () => {
+  assert.equal(CITIES.length, 100);
+  assert.equal(new Set(CITIES.map((c) => c[0])).size, 100);
+  for (const [, , , lat, lng] of CITIES) assert.ok(Math.abs(lat) <= 90 && Math.abs(lng) <= 180);
+  for (const k of ['church', 'mosque', 'synagogue', 'hindu']) assert.ok(NEAR_KINDS[k], k);
+  assert.equal(markKindOf({ kind: 'church' }), 'church'); assert.equal(markKindOf({ kind: 'mosque' }), 'mosque');
+  assert.equal(markKindOf({ kind: 'synagogue' }), 'synagogue'); assert.equal(markKindOf({ kind: 'hindu' }), 'temple');
+  assert.equal(questCategory({ kind: 'church' }), 'sacred'); assert.equal(questCategory({ kind: 'cafe' }), 'food');
+});
+
+test("data/spots: 海外の近所の場所（100都市）は日本語名つきで、種類・国が付き、id が重ならない", () => {
+  const dir = new URL("../data/spots/", import.meta.url);
+  const ids = new Set(); const kinds = {}; const countries = new Set(); let n = 0; let noJa = 0;
+  for (const f of readdirSync(dir)) {
+    if (f === "meta.json") continue;
+    for (const r of JSON.parse(readFileSync(new URL(f, dir), "utf8"))) {
+      assert.ok(!ids.has(r[0]), r[0]); ids.add(r[0]);
+      if (r[5] !== "near" || r[9] === "日本") continue;
+      assert.ok(!/ ／ /.test(r[2]), "翻訳の入力の形が混ざっている: " + r[2]);
+      n++; kinds[r[1]] = (kinds[r[1]] || 0) + 1; countries.add(r[9]);
+      assert.ok(NEAR_KINDS[r[1]], r[1]); assert.ok(r[2], r[0]); assert.ok(Math.abs(r[3]) <= 90 && Math.abs(r[4]) <= 180);
+      if (!hasJa(r[2])) noJa++; else if (r[10]) assert.ok(r[10] !== r[2]);
+    }
+  }
+  assert.ok(n > 18000 && n < 40000, "件数 " + n);
+  assert.ok(countries.size >= 60, "国 " + countries.size);
+  for (const k of ["church", "mosque", "synagogue", "museum", "viewpoint", "sight", "bakery", "cafe"]) assert.ok(kinds[k] > 100, k);
+  assert.ok(noJa / n < 0.08, "日本語でない名前 " + noJa);
 });
